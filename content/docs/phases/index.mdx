@@ -1,0 +1,37 @@
+---
+title: Game Phases
+description: Detailed documentation of all game phases and their implementation
+---
+
+# Game Phases Overview
+
+This section describes all the game phases in Rosiko, from initial setup to gameplay. Each phase has specific mechanics and validation rules.
+
+## Phase Flow
+
+The game progresses through several phases in order:
+
+1. **Territory Assignment** - Initial distribution of territories among players
+2. **Color Selection** - Players choose their army colors in sequence
+3. **Troops Assignment** - Calculate and assign initial troops based on player count
+4. **Objectives Assignment** - Secret assignment of main and secondary objectives
+
+## Phase Documentation
+
+<Cards>
+  <Card title="Territory Assignment" href="/docs/phases/assegnazione_territori" />
+  <Card title="Color Selection" href="/docs/phases/scelta_colore" />
+  <Card title="Troops Assignment" href="/docs/phases/assegnazione_carri_armati" />
+  <Card title="Objectives Assignment" href="/docs/phases/assegnazione_obiettivi" />
+</Cards>
+
+## Implementation Details
+
+Each phase is managed by the **GameManager** and follows a server-authoritative architecture:
+
+- **Server Validation** - All phase transitions are validated on the server
+- **Deterministic Logic** - Same seed produces same results across all clients
+- **Replication** - State changes are automatically replicated to clients
+- **Turn-based Flow** - Players act in sequence based on turn order
+
+For more information on the overall game flow, see the [Game Flow](/docs/overview/game_flow) documentation.

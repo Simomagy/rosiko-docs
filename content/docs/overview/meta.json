@@ -1,7 +1,7 @@
 {
-  "title": "Documentation",
+  "title": "Overview",
   "pages": [
-    "overview",
+    "index",
     "game_manager",
     "player_state",
     "game_state",
@@ -12,11 +12,6 @@
     "map_generation",
     "objectives_ui",
     "replication_strategy",
-    "data_structures",
-    "assegnazione_territori",
-    "scelta_colore",
-    "assegnazione_carri_armati",
-    "assegnazione_obiettivi",
-    "test"
+    "data_structures"
   ]
 }

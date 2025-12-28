@@ -7,8 +7,13 @@ export function baseOptions(): BaseLayoutProps {
     },
     links: [
       {
-        text: 'Documentation',
-        url: '/docs',
+        text: 'Phases',
+        url: '/phases',
+        active: 'nested-url',
+      },
+      {
+        text: 'Overview',
+        url: '/overview',
         active: 'nested-url',
       },
       {

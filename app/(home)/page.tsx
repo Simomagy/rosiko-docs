@@ -9,10 +9,16 @@ export default function HomePage() {
         </h1>
         <div className="flex gap-4 justify-center flex-wrap">
           <Link
-            href="/docs"
+            href="/docs/overview"
             className="px-6 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity"
           >
-            View Documentation
+            Overview
+          </Link>
+          <Link
+            href="/docs/phases"
+            className="px-6 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity"
+          >
+            Phases
           </Link>
         </div>
       </div>
