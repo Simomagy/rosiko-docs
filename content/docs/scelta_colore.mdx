@@ -1,0 +1,339 @@
+---
+title: Scelta Colore
+description: Sistema di selezione sequenziale dei colori esercito
+---
+
+## Panoramica
+Sistema di selezione sequenziale dei colori esercito, dove ogni giocatore sceglie a turno il proprio colore tra quelli disponibili.
+
+---
+
+## Quando Avviene
+
+### Fase di Gioco
+La selezione colori è la **prima fase interattiva** della partita:
+
+```
+WaitingForPlayers (Lobby)
+↓
+ColorSelection ← QUI
+↓
+(Assegnazione Obiettivi)
+↓
+InitialDistribution
+```
+
+### Trigger Inizio
+```cpp
+ChangePhase(EGamePhase::ColorSelection);
+GS->CurrentPlayerTurn = 0;  // Primo player inizia
+```
+
+---
+
+## Flusso Completo
+
+### 1. Inizializzazione Colori Disponibili
+All'inizio della fase, i colori disponibili vengono copiati nel GameState:
+
+```cpp
+GS->AvailableColors = PlayerColors;  // [Rosso, Blu, Verde, Giallo, Arancione, Viola]
+```
+
+### 2. Notifica al Player Corrente
+Il server notifica il client di turno che deve scegliere:
+
+```cpp
+OnColorSelectionRequired.Broadcast(CurrentPlayerID, GS->AvailableColors);
+Multicast_NotifyColorSelectionTurn(CurrentPlayerID, GS->AvailableColors);
+```
+
+### 3. Client Sceglie Colore
+Il client mostra UI con colori disponibili:
+
+```
+┌─────────────────────┐
+│ Scegli il tuo colore │
+├─────────────────────┤
+│ [🔴] Rosso          │
+│ [🔵] Blu            │
+│ [🟢] Verde          │
+│ [🟡] Giallo         │
+│ [🟠] Arancione      │
+│ [🟣] Viola          │
+└─────────────────────┘
+```
+
+Player clicca su un colore.
+
+### 4. Invio Richiesta al Server
+```cpp
+PlayerController->Server_SelectPlayerColor(PlayerID, ChosenColor);
+```
+
+### 5. Validazione Server
+Il server esegue `SelectPlayerColor_Direct()` con validazioni:
+
+```cpp
+void ARosikoGameManager::SelectPlayerColor_Direct(int32 PlayerID, FLinearColor ChosenColor)
+```
+
+---
+
+## Validazioni Server
+
+### 1. Fase Corretta
+```cpp
+if (GS->CurrentPhase != EGamePhase::ColorSelection) {
+    UE_LOG(..., Warning, TEXT("Cannot select color outside ColorSelection phase"));
+    return;
+}
+```
+
+### 2. Turno del Player
+```cpp
+int32 CurrentPlayerID = GS->TurnOrder[GS->CurrentPlayerTurn];
+if (PlayerID != CurrentPlayerID) {
+    UE_LOG(..., Warning, TEXT("Not your turn (current: Player %d)"), CurrentPlayerID);
+    return;
+}
+```
+
+**Importante:** Solo il player di turno può scegliere.
+
+### 3. Non Ha Già Scelto
+```cpp
+if (PS->bHasSelectedColor) {
+    UE_LOG(..., Warning, TEXT("Has already selected a color"));
+    return;
+}
+```
+
+Previene scelte multiple.
+
+### 4. Colore Disponibile
+```cpp
+bool bColorAvailable = false;
+int32 ColorIndex = -1;
+for (int32 i = 0; i < GS->AvailableColors.Num(); i++) {
+    if (GS->AvailableColors[i].Equals(ChosenColor, 0.01f)) {  // Tolleranza 0.01
+        bColorAvailable = true;
+        ColorIndex = i;
+        break;
+    }
+}
+
+if (!bColorAvailable) {
+    UE_LOG(..., Warning, TEXT("Chosen color not available"));
+    return;
+}
+```
+
+**Tolleranza:** 0.01 per confronto float colors (evita errori di precisione).
+
+---
+
+## Applicazione Colore
+
+Se tutte le validazioni passano:
+
+```cpp
+// 1. Assegna colore al PlayerState
+PS->SetArmyColor(ChosenColor);
+PS->bHasSelectedColor = true;
+
+// 2. Rimuovi colore dai disponibili
+GS->AvailableColors.RemoveAt(ColorIndex);
+
+// 3. Aggiungi player al TurnOrder
+GS->TurnOrder.Add(PlayerID);
+
+// 4. Log
+UE_LOG(..., Log, TEXT("%s selected color %s"),
+       *PS->GetPlayerName(), *ChosenColor.ToString());
+
+// 5. Broadcast ai client
+BroadcastPlayerUpdate(PlayerID);
+Multicast_NotifyPlayerColorSelected(PlayerID, ChosenColor);
+```
+
+---
+
+## Avanzamento al Prossimo Player
+
+### Controlla se Tutti Hanno Scelto
+```cpp
+bool bAllPlayersSelected = true;
+for (int32 CheckPlayerID : GS->TurnOrder) {
+    ARosikoPlayerState* CheckPS = GetRosikoPlayerState(CheckPlayerID);
+    if (CheckPS && !CheckPS->bHasSelectedColor) {
+        bAllPlayersSelected = false;
+        break;
+    }
+}
+```
+
+### Se Tutti Hanno Scelto
+```cpp
+if (bAllPlayersSelected) {
+    UE_LOG(..., Log, TEXT("All players selected colors!"));
+
+    // 1. Assegna obiettivi
+    AssignObjectivesToAllPlayers();
+
+    // 2. Distribuisci territori
+    DistributeInitialTerritories();
+
+    // 3. Cambia fase
+    ChangePhase(EGamePhase::InitialDistribution);
+
+    // 4. Reset turno
+    GS->CurrentPlayerTurn = 0;
+
+    // 5. Inizio piazzamento
+    StartInitialPlacement();
+}
+```
+
+### Se Ci Sono Altri Player
+```cpp
+else {
+    // Prossimo player che NON ha ancora scelto
+    for (int32 i = 0; i < GS->TurnOrder.Num(); i++) {
+        int32 CheckPlayerID = GS->TurnOrder[i];
+        ARosikoPlayerState* CheckPS = GetRosikoPlayerState(CheckPlayerID);
+
+        if (CheckPS && !CheckPS->bHasSelectedColor) {
+            GS->CurrentPlayerTurn = i;
+
+            // Notifica
+            OnColorSelectionRequired.Broadcast(CheckPlayerID, GS->AvailableColors);
+            Multicast_NotifyColorSelectionTurn(CheckPlayerID, GS->AvailableColors);
+            break;
+        }
+    }
+}
+```
+
+---
+
+## TurnOrder e Ordine Selezione
+
+### Costruzione TurnOrder
+Il `TurnOrder` viene costruito **dinamicamente** in base all'ordine di selezione:
+
+```
+Player 2 sceglie per primo → TurnOrder = [2]
+Player 0 sceglie per secondo → TurnOrder = [2, 0]
+Player 3 sceglie per terzo → TurnOrder = [2, 0, 3]
+Player 1 sceglie per quarto → TurnOrder = [2, 0, 3, 1]
+```
+
+**Questo ordine determina:**
+- Ordine turni per tutta la partita
+- Ordine distribuzione territori
+- Ordine piazzamento truppe iniziali
+
+---
+
+## Colori Default
+
+### PlayerColors Iniziali
+```cpp
+TArray<FLinearColor> PlayerColors = {
+    FLinearColor::Red,       // Rosso
+    FLinearColor::Blue,      // Blu
+    FLinearColor::Green,     // Verde
+    FLinearColor::Yellow,    // Giallo
+    FLinearColor(1.0f, 0.5f, 0.0f),  // Arancione
+    FLinearColor(0.5f, 0.0f, 0.5f)   // Viola
+};
+```
+
+Supporta **fino a 6 giocatori** di default.
+Per più giocatori, aggiungere colori aggiuntivi.
+
+---
+
+## Replicazione
+
+### PlayerState Replicato
+```cpp
+UPROPERTY(Replicated)
+FLinearColor ArmyColor;
+
+UPROPERTY(Replicated)
+bool bHasSelectedColor;
+```
+
+Tutti i client vedono:
+- Colore scelto da ogni player
+- Chi ha già scelto e chi no
+
+### GameState Replicato
+```cpp
+UPROPERTY(Replicated)
+TArray<FLinearColor> AvailableColors;
+
+UPROPERTY(Replicated)
+int32 CurrentPlayerTurn;
+
+UPROPERTY(Replicated)
+TArray<int32> TurnOrder;
+```
+
+I client possono mostrare:
+- Quali colori sono ancora disponibili
+- Chi deve scegliere ora
+- Ordine turni stabilito
+
+---
+
+## RPC Pattern
+
+### Client → Server
+```cpp
+UFUNCTION(Server, Reliable, WithValidation)
+void Server_SelectPlayerColor(int32 PlayerID, FLinearColor ChosenColor);
+```
+
+**Validazione RPC (base):**
+```cpp
+bool Server_SelectPlayerColor_Validate(...) {
+    return true;  // Validazione soft
+}
+```
+
+**Validazione Gameplay (in SelectPlayerColor_Direct):**
+- Fase corretta
+- Turno del player
+- Colore disponibile
+- Non già scelto
+
+### Server → Clients
+```cpp
+UFUNCTION(NetMulticast, Reliable)
+void Multicast_NotifyPlayerColorSelected(int32 PlayerID, FLinearColor Color);
+
+UFUNCTION(NetMulticast, Reliable)
+void Multicast_NotifyColorSelectionTurn(int32 PlayerID, TArray<FLinearColor> AvailableColors);
+```
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Selezione sequenziale a turni
+- Validazione completa server-side
+- Rimozione colori disponibili
+- Costruzione TurnOrder dinamica
+- Replicazione colori e stato
+- RPC sicuri con validazione owner
+- Transizione automatica alla fase successiva
+
+🔧 Future implementazioni:
+- Timer per selezione (auto-skip dopo X secondi)
+- Colore random se timeout
+- Preview colore sulla mappa
+- Animazioni transizione

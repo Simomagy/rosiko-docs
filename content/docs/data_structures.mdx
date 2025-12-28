@@ -1,0 +1,230 @@
+---
+title: Data Structures
+description: Strutture dati core usate in tutto il progetto
+---
+
+## Overview
+Questo documento descrive le strutture dati core usate in tutto il progetto.
+
+---
+
+## Obiettivi
+
+### EObjectiveConditionType
+```cpp
+enum class EObjectiveConditionType : uint8 {
+    ControlSpecificContinents,     // Possiedi continenti X, Y, Z
+    ControlAnyContinents,          // Possiedi N continenti qualsiasi
+    ControlTotalTerritories,       // Possiedi X territori totali
+    ControlTerritoriesInContinent, // X territori in continente Y
+    ArmyDensity,                   // X territori con Y+ armate
+    EliminatePlayer,               // Elimina giocatore colore X
+    ConquerCapital,                // Conquista territorio capitale
+    TerritoryChain,                // Catena di X territori adiacenti
+    SurviveToEnd,                  // Ultimo sopravvissuto
+    ControlBorderTerritories       // Tutti i bordi di un continente
+};
+```
+
+### FObjectiveCondition
+```cpp
+struct FObjectiveCondition {
+    EObjectiveConditionType Type;
+
+    // Parametri condizionali (usati in base al Type)
+    TArray<int32> TargetContinents;
+    int32 RequiredContinentCount;
+    int32 TargetTerritoryCount;
+    int32 RequiredArmyCount;
+    FLinearColor TargetPlayerColor;
+    int32 TargetTerritoryID;
+    int32 ChainLength;
+};
+```
+
+### FObjectiveDefinition
+```cpp
+struct FObjectiveDefinition {
+    FText DisplayName;                      // "Conquistatore d'Europa"
+    FText Description;                      // "Controlla Europa e Asia"
+    TArray<FObjectiveCondition> Conditions; // Lista AND
+    int32 VictoryPoints;                    // Punti se completato
+    bool bIsMainObjective;                  // Principale o secondario?
+
+    // Filtri validità
+    int32 MinPlayers;
+    int32 MaxPlayers;
+    TArray<FLinearColor> RequiredColors;
+    TArray<int32> RequiredContinents;
+};
+```
+
+### FAssignedObjective
+```cpp
+struct FAssignedObjective {
+    FObjectiveDefinition Definition;
+    bool bCompleted;
+    int32 CompletionTurn;
+    float CompletionTimeSeconds;
+    int32 ObjectiveIndex;  // ID nel deck originale
+};
+```
+
+---
+
+## Fasi di Gioco
+
+### EGamePhase
+```cpp
+enum class EGamePhase : uint8 {
+    WaitingForPlayers,
+    ColorSelection,
+    InitialDistribution,
+    ReinforcementPlacement,
+    Combat,
+    Fortification,
+    GameOver
+};
+```
+
+---
+
+## Colori
+
+### Colori Predefiniti
+```cpp
+TArray<FLinearColor> DefaultColors = {
+    FLinearColor::Red,
+    FLinearColor::Blue,
+    FLinearColor::Green,
+    FLinearColor::Yellow,
+    FLinearColor(1.0f, 0.5f, 0.0f), // Arancione
+    FLinearColor(0.5f, 0.0f, 0.5f)  // Viola
+};
+```
+
+---
+
+## Territori
+
+### TerritoryID
+```cpp
+// Semplice int32, range 0-41 (mappa standard)
+typedef int32 TerritoryID;
+```
+
+### ContinentID
+```cpp
+enum class EContinentID : uint8 {
+    NorthAmerica = 0,
+    SouthAmerica = 1,
+    Europe = 2,
+    Africa = 3,
+    Asia = 4,
+    Oceania = 5,
+    COUNT = 6
+};
+```
+
+### FContinentDefinition
+```cpp
+struct FContinentDefinition {
+    int32 ID;
+    FString Name;
+    TArray<int32> TerritoryIDs;
+    int32 BonusTroops;
+    FLinearColor MapColor; // Colore sulla mappa
+};
+```
+
+---
+
+## Configurazione
+
+### UObjectivesConfig (DataAsset)
+```cpp
+class UObjectivesConfig : public UDataAsset {
+    UPROPERTY(EditAnywhere)
+    TArray<FObjectiveDefinition> MainObjectiveDeck;
+
+    UPROPERTY(EditAnywhere)
+    TArray<FObjectiveDefinition> SecondaryObjectiveDeck;
+
+    UPROPERTY(EditAnywhere)
+    int32 NumSecondaryObjectivesPerPlayer = 4;
+
+    UPROPERTY(EditAnywhere)
+    bool bAllowDuplicateMainObjectives = false;
+
+    UPROPERTY(EditAnywhere)
+    bool bKeepSecondariesSecret = false;
+
+    UPROPERTY(EditAnywhere)
+    int32 ShuffleSeed = 12345;
+};
+```
+
+---
+
+## Helper Types
+
+### PlayerID
+```cpp
+// Semplice int32, range 0-5
+typedef int32 PlayerID;
+```
+
+### TurnNumber
+```cpp
+// Numero turno globale, incrementa ogni round completo
+typedef int32 TurnNumber;
+```
+
+---
+
+## Best Practices
+
+**Usa Struct per Data:**
+FObjectiveDefinition, FContinentDefinition = pure data.
+Nessuna logica, solo storage.
+
+**Usa Enum per Stati:**
+EGamePhase, EObjectiveConditionType = stati finiti.
+Switch esauriente, type-safe.
+
+**Usa DataAsset per Config:**
+UObjectivesConfig = configurazione editabile.
+Nessun hardcoding, tutto in asset.
+
+**Usa TArray/TMap per Collections:**
+Niente array C-style.
+Memory-safe, bounds-checked.
+
+---
+
+## Serializzazione
+
+Tutte le struct usano `GENERATED_BODY()` e `UPROPERTY()`.
+
+**Implica:**
+- Serializzazione automatica
+- Replicazione automatica
+- Blueprint-accessible
+- Reflection support
+- Garbage collection
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Tutte le struct obiettivi
+- Enum fasi e condizioni
+- DataAsset config
+- Helper types
+
+🔧 Da aggiungere:
+- Combat structs (attacco, difesa, dadi)
+- Card structs (carte territorio)
+- Achievement structs
+- Replay data structs

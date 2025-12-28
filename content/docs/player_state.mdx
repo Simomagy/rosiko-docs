@@ -1,0 +1,134 @@
+---
+title: PlayerState
+description: Dati persistenti del giocatore replicati dal server ai client
+---
+
+## Ruolo
+Il **PlayerState** memorizza tutti i dati persistenti di un giocatore durante la partita, replicati dal server ai client.
+
+---
+
+## Dati Replicati
+
+### Identità Giocatore
+- `GameManagerPlayerID` - ID univoco (0-5)
+- `ArmyColor` - Colore esercito scelto
+- `bHasSelectedColor` - Flag selezione completata
+
+### Stato di Gioco
+- `TroopsToPlace` - Truppe da piazzare questo turno
+- `TerritoriesControlled` - Array ID territori posseduti
+- `bIsEliminated` - Se giocatore eliminato
+- `EliminatedBy` - Chi ha eliminato questo giocatore
+
+### Obiettivi (SEGRETI)
+- `MainObjective` - Obiettivo principale (vittoria immediata)
+- `SecondaryObjectives` - Array obiettivi secondari (punti)
+
+**Replicazione Sicura:**
+Gli obiettivi usano `COND_OwnerOnly` - solo il proprietario li vede!
+
+---
+
+## Sistema RepNotify
+
+### OnRep_MainObjective
+Chiamato automaticamente quando l'obiettivo principale arriva dal server.
+Broadcast evento `OnObjectivesUpdated` per notificare l'UI.
+
+### OnRep_SecondaryObjectives
+Chiamato quando gli obiettivi secondari arrivano dal server.
+Broadcast evento per refresh UI automatico.
+
+**Vantaggi:**
+- Nessun polling necessario
+- UI si aggiorna istantaneamente
+- Zero overhead quando nulla cambia
+
+---
+
+## Event Dispatcher
+
+### OnObjectivesUpdated
+Evento Blueprint-bindable che notifica:
+- Assegnazione iniziale obiettivi
+- Completamento obiettivi
+- Qualsiasi modifica agli obiettivi
+
+L'UI si mette in ascolto su questo evento per auto-aggiornarsi.
+
+---
+
+## Metodi Principali
+
+### Query Obiettivi
+```cpp
+GetTotalVictoryPoints()           // Somma punti da secondari
+HasCompletedMainObjective()        // Check vittoria
+GetCompletedSecondaryCount()       // Quanti secondari fatti
+GetAllObjectives()                 // Lista per UI
+```
+
+### Assignment (Server-Only)
+```cpp
+AssignMainObjective(Def, Index)     // Assegna principale
+AssignSecondaryObjective(Def, Index) // Assegna secondario
+CompleteMainObjective(Turn)         // Marca come completato
+CompleteSecondaryObjective(Index, Turn) // Completa secondario
+```
+
+### Stato Gioco
+```cpp
+AddTroops(Num)        // Aggiungi truppe da piazzare
+RemoveTroops(Num)     // Rimuovi quando piazzate
+AddTerritory(ID)      // Conquista territorio
+RemoveTerritory(ID)   // Perde territorio
+```
+
+---
+
+## Sicurezza
+
+**Owner-Only Replication**
+Gli obiettivi sono segreti. Usiamo:
+```cpp
+DOREPLIFETIME_CONDITION(ARosikoPlayerState, MainObjective, COND_OwnerOnly);
+```
+
+Implica:
+- Solo il client proprietario riceve i dati
+- Altri client vedono valori di default
+- Impossibile sniffare obiettivi altrui
+
+**Validation**
+Ogni modifica agli obiettivi richiede `HasAuthority()` check.
+I client non possono mai modificare i propri obiettivi.
+
+---
+
+## Integrazione
+
+**Con GameManager:**
+Riceve assegnazioni obiettivi e aggiornamenti stato.
+
+**Con PlayerController:**
+Il controller legge il PlayerState per mostrare dati all'UI.
+
+**Con UI Widgets:**
+I widget si bindano a `OnObjectivesUpdated` per refresh automatico.
+
+---
+
+## Vantaggi Design
+
+✅ **Replicazione Automatica**
+UE gestisce la sincronizzazione, noi definiamo solo cosa replicare.
+
+✅ **Type-Safe**
+Struct C++ garantiscono validità dati.
+
+✅ **Event-Driven**
+Nessun tick, solo notifiche quando serve.
+
+✅ **Sicuro**
+Condizioni di replicazione prevengono leak informazioni.

@@ -1,0 +1,230 @@
+---
+title: Territory System
+description: Sistema di gestione dei territori di gioco
+---
+
+## ATerritoryActor
+
+### Responsabilità
+Rappresenta un singolo territorio sulla mappa di gioco.
+
+---
+
+## Proprietà Core
+
+### Identità
+```cpp
+int32 TerritoryID;           // ID univoco (0-41)
+FString TerritoryName;       // "Alaska", "Kamchatka"...
+int32 ContinentID;           // A quale continente appartiene
+```
+
+### Stato Runtime (Replicato)
+```cpp
+int32 OwnerPlayerID;         // Chi possiede (-1 = neutrale)
+int32 ArmyCount;             // Quante armate presenti
+```
+
+### Connessioni
+```cpp
+TArray<int32> AdjacentTerritoryIDs;  // IDs territori confinanti
+```
+
+---
+
+## Visualizzazione
+
+### Static Mesh
+Ogni territorio ha una mesh 3D che rappresenta la sua forma geografica.
+
+### Dynamic Material
+Material cambia colore in base al proprietario:
+```cpp
+void UpdateTerritoryColor(FLinearColor OwnerColor) {
+    DynamicMaterial->SetVectorParameterValue("BaseColor", OwnerColor);
+}
+```
+
+### Outline/Highlight
+- **Hover**: Outline bianco
+- **Selected**: Outline giallo
+- **Attackable**: Outline rosso
+- **Fortifiable**: Outline blu
+
+---
+
+## Interazione
+
+### Click Handler
+```cpp
+void OnTerritoryClicked() {
+    // Notifica controller
+    PlayerController->OnTerritorySelected(TerritoryID);
+}
+```
+
+### Hover Feedback
+```cpp
+void OnMouseEnter() {
+    ShowOutline(FLinearColor::White);
+    ShowTooltip();
+}
+
+void OnMouseExit() {
+    HideOutline();
+    HideTooltip();
+}
+```
+
+---
+
+## Tooltip
+
+Mostra info quando hover:
+```
+┌───────────────┐
+│ Alaska        │
+│ Owner: Rosso  │
+│ Armate: 5     │
+│ Continente:   │
+│ Nord America  │
+└───────────────┘
+```
+
+---
+
+## Metodi Principali
+
+### SetOwner
+```cpp
+void SetOwner(int32 NewOwnerID, FLinearColor OwnerColor) {
+    OwnerPlayerID = NewOwnerID;
+    UpdateTerritoryColor(OwnerColor);
+}
+```
+
+### AddArmies / RemoveArmies
+```cpp
+void AddArmies(int32 Count) {
+    ArmyCount += Count;
+    UpdateArmyDisplay();
+}
+```
+
+### IsAdjacentTo
+```cpp
+bool IsAdjacentTo(int32 OtherTerritoryID) {
+    return AdjacentTerritoryIDs.Contains(OtherTerritoryID);
+}
+```
+
+---
+
+## Replicazione
+
+### Replicated Properties
+```cpp
+DOREPLIFETIME(ATerritoryActor, OwnerPlayerID);
+DOREPLIFETIME(ATerritoryActor, ArmyCount);
+```
+
+**Non replicati:**
+TerritoryID, ContinentID, AdjacentIDs = static data.
+Generati localmente, identici su tutti i client.
+
+---
+
+## Adiacenze
+
+### Definizione
+Due territori sono adiacenti se:
+- Condividono un confine geografico
+- O hanno un collegamento marittimo speciale
+
+Esempio:
+- Alaska ↔ Kamchatka (collegamento speciale)
+- Italia ↔ Francia (confine geografico)
+
+### Setup
+Definite in config o calcolate da geometria:
+```cpp
+// Config-based
+TerritoryConfigs[0].AdjacentIDs = {1, 2, 38};
+
+// O geometry-based (overlap detection)
+DetectAdjacentTerritories();
+```
+
+---
+
+## Stati Visivi
+
+### Neutrale
+- Grigio chiaro
+- Nessun proprietario
+- Solo fase iniziale
+
+### Owned
+- Colore del proprietario
+- Display armate
+- Interattivo
+
+### Attackable
+- Outline rosso
+- Evidenziato durante combat
+- Click per attaccare
+
+### Fortifiable
+- Outline blu
+- Evidenziato durante fortification
+- Click per spostare truppe
+
+---
+
+## Army Display
+
+Visualizzazione numero armate:
+
+**3D Text:**
+Componente TextRender sopra territorio.
+
+**Widget Component:**
+UMG widget 3D per display avanzato.
+
+**Icon System:**
+- 1-9 armate: numero
+- 10+ armate: numero + icona bandiera
+- 20+ armate: numero + doppia bandiera
+
+---
+
+## Continenti
+
+### Appartenenza
+Ogni territorio appartiene a esattamente 1 continente.
+
+### Bonus Controllo
+Se un player controlla TUTTI i territori di un continente:
+→ Riceve bonus truppe ogni turno.
+
+Il GameManager controlla questo:
+```cpp
+bool DoesPlayerControlContinent(PlayerID, ContinentID);
+```
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Struct base TerritoryActor
+- Replicazione owner e armate
+- Adiacenze
+- Material dinamico
+
+🔧 Da fare:
+- Click/hover interazione
+- Tooltip
+- Outline system
+- Army display 3D
+- Animazioni conquista

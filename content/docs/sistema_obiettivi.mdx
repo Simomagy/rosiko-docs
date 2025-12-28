@@ -1,0 +1,242 @@
+---
+title: Sistema Obiettivi
+description: Il cuore del gioco con obiettivi principali e secondari
+---
+
+## Filosofia
+Gli obiettivi sono il **cuore** di Rosiko. Determinano come si vince e guidano le strategie dei giocatori.
+
+---
+
+## Tipi di Obiettivi
+
+### Obiettivo Principale (Main)
+- **1 per giocatore**
+- **Segreto** - solo tu lo vedi
+- **Vittoria immediata** quando completato
+- Esempi:
+  - Conquistare tutti i continenti
+  - Conquistare 24 territori
+  - Eliminare un giocatore specifico
+  - Controllare 3 continenti qualsiasi
+
+### Obiettivi Secondari (Secondary)
+- **Configurabile** (default: 4 per giocatore)
+- **Pubblici** (o privati, configurabile)
+- **Punti vittoria** quando completati (1-3 pt)
+- Se nessuno completa il principale → vince chi ha più punti
+- Esempi:
+  - Controllare un continente specifico
+  - Avere 18 territori
+  - Avere 5 territori con 3+ armate
+  - Controllare 2 continenti qualsiasi
+
+---
+
+## Tipi di Condizioni
+
+Il sistema supporta 10+ tipi di condizioni:
+
+### 1. Controllo Continente Specifico
+```
+Possiedi Europa, Asia, Nord America
+```
+
+### 2. Controllo N Continenti Qualsiasi
+```
+Controlla 3 continenti qualsiasi
+```
+
+### 3. Numero Totale Territori
+```
+Possiedi 24 territori
+```
+
+### 4. Territori in un Continente
+```
+Possiedi almeno 10 territori in Asia
+```
+
+### 5. Densità Armate
+```
+Hai 5 territori con almeno 3 armate ciascuno
+```
+
+### 6. Eliminazione Giocatore
+```
+Elimina il giocatore Rosso
+```
+
+### 7. Conquista Capitale
+```
+Controlla il territorio Mosca
+```
+
+### 8. Catena Territoriale
+```
+Controlla una catena di 8 territori adiacenti
+```
+
+### 9. Sopravvivenza
+```
+Sii l'ultimo giocatore rimasto
+```
+
+### 10. Controllo Bordi
+```
+Controlla tutti i territori costieri di un continente
+```
+
+Ogni condizione è estensibile e combinabile.
+
+---
+
+## Strutture Dati
+
+### FObjectiveCondition
+Definisce una singola condizione da soddisfare:
+```cpp
+EObjectiveConditionType Type;   // Tipo condizione
+TArray<int32> TargetContinents; // Continenti richiesti
+int32 TargetTerritoryCount;     // Numero territori
+int32 RequiredArmyCount;        // Armate richieste
+FLinearColor TargetPlayerColor; // Colore da eliminare
+// ... altri parametri
+```
+
+### FObjectiveDefinition
+Definisce un obiettivo completo:
+```cpp
+FText DisplayName;              // "Conquistatore d'Europa"
+FText Description;              // "Controlla Europa e Africa"
+TArray<FObjectiveCondition> Conditions; // Lista AND
+int32 VictoryPoints;            // Punti per secondari
+bool bIsMainObjective;          // Principale o secondario?
+```
+
+### FAssignedObjective
+Obiettivo assegnato a un giocatore:
+```cpp
+FObjectiveDefinition Definition;
+bool bCompleted;                // Se completato
+int32 CompletionTurn;           // Turno completamento
+int32 ObjectiveIndex;           // ID originale
+```
+
+---
+
+## Configurazione - ObjectivesConfig
+
+### DataAsset
+Tutto configurabile tramite `UObjectivesConfig` DataAsset:
+
+```cpp
+TArray<FObjectiveDefinition> MainObjectiveDeck;      // Pool principali
+TArray<FObjectiveDefinition> SecondaryObjectiveDeck; // Pool secondari
+
+int32 NumSecondaryObjectivesPerPlayer = 4;  // Configurabile 0-10
+
+bool bAllowDuplicateMainObjectives = false; // Duplicati?
+bool bKeepSecondariesSecret = false;        // Secondari segreti?
+
+int32 ShuffleSeed = 12345;                  // Seed per shuffle deterministico
+```
+
+### Filtri Automatici
+Obiettivi vengono filtrati automaticamente:
+- **MinPlayers/MaxPlayers** - Valido solo con X-Y giocatori
+- **RequiredColors** - Serve un giocatore di quel colore
+- **RequiredContinents** - Serve quel continente sulla mappa
+
+Solo obiettivi validi entrano nel pool di assegnazione.
+
+---
+
+## Flusso di Gioco
+
+### 1. Setup Iniziale
+```
+GameManager carica ObjectivesConfig
+↓
+Filtra obiettivi validi per questa partita
+↓
+Shuffle con seed deterministico
+```
+
+### 2. Assegnazione
+```
+Tutti i giocatori scelgono colore
+↓
+GameManager.AssignObjectivesToAllPlayers()
+↓
+Ogni PlayerState riceve obiettivi
+↓
+Replicazione COND_OwnerOnly ai client
+↓
+RepNotify triggera OnObjectivesUpdated
+↓
+UI si popola automaticamente
+```
+
+### 3. Valutazione (Ogni Fine Turno)
+```
+PlayerA completa il turno
+↓
+GameManager.CheckPlayerObjectives(PlayerA)
+↓
+Per ogni obiettivo di PlayerA:
+  ↓
+  EvaluateObjectiveCondition(condizione)
+  ↓
+  Se tutte condizioni OK → Completa obiettivo
+↓
+Se principale completato → Vittoria immediata
+Se secondario completato → +Punti vittoria
+↓
+Notifica a tutti i client
+```
+
+### 4. Vittoria
+```
+Caso A: Qualcuno completa obiettivo principale
+→ Vittoria immediata
+
+Caso B: Ultimo giocatore rimasto
+→ Vittoria per sopravvivenza
+
+Caso C: Condizione timer/round
+→ Vince chi ha più punti vittoria
+```
+
+---
+
+## Bilanciamento
+
+### Difficoltà Obiettivi Principali
+- Facili: 24 territori, 2 continenti
+- Medi: 3 continenti, eliminare colore specifico
+- Difficili: Tutti i continenti, catene lunghe
+
+### Punti Secondari
+- 1pt: Obiettivi facili (1 continente piccolo)
+- 2pt: Obiettivi medi (continente grande, densità)
+- 3pt: Obiettivi difficili (multipli continenti)
+
+---
+
+## Stato Implementazione
+
+✅ **Completato:**
+- Tutte le strutture dati
+- Sistema configurazione completo
+- Filtri e shuffle
+- Assegnazione automatica
+- Valutazione tutte le condizioni
+- Replicazione sicura
+- UI base
+
+🔧 **Da fare:**
+- Bilanciamento valori
+- Più varietà obiettivi
+- Obiettivi dinamici (cambiano durante partita)
+- Achievement legati ad obiettivi

@@ -1,0 +1,116 @@
+---
+title: Project Overview
+description: Strategic multiplayer Risk-like game developed in Unreal Engine 5
+---
+
+# 🎯 Rosiko - Progetto Overview
+
+**Risiko strategico multiplayer** sviluppato in Unreal Engine 5.
+
+Gioco di strategia a turni basato su Risk, con sistema di obiettivi, replicazione multiplayer e generazione procedurale della mappa.
+
+---
+
+## 📚 Documentazione Componenti
+
+Ogni file in questa cartella descrive un aspetto chiave del progetto.
+
+### 🔧 Core Systems
+- `01_GameManager` - Orchestrazione del gioco e flusso delle fasi
+- `02_PlayerState` - Stato del giocatore e dati replicati
+- `03_GameState` - Stato globale della partita
+- `04_PlayerController` - Input e comandi del giocatore
+
+### 🎮 Gameplay Systems
+- `05_Sistema_Obiettivi` - Obiettivi principali e secondari, condizioni di vittoria
+- `06_Territory_System` - Gestione territori, possessi, adiacenze
+- `07_Game_Flow` - Flusso completo della partita dall'inizio alla fine
+
+### 🌎 World
+- `08_Map_Generation` - Generazione procedurale della mappa
+
+### 🖼️ UI/UX
+- `09_Objectives_UI` - Pannello obiettivi, carte, notifiche
+
+### 🌐 Networking
+- `10_Replication_Strategy` - Architettura client-server, sicurezza
+
+### 📊 Data
+- `11_Data_Structures` - Strutture dati, enum, configurazioni
+
+---
+
+## 🎮 Stato Generale
+
+**Fase Corrente:** Sviluppo sistema obiettivi e UI
+
+### Funzionalità Completate ✅
+- Architettura base multiplayer server-authoritative
+- Sistema di fasi di gioco con transizioni
+- Selezione colori round-robin
+- Distribuzione territori iniziale
+- **Sistema obiettivi completo** (assegnazione, valutazione, replicazione)
+- **UI obiettivi base** (pannello, carte, auto-update)
+- PlayerState con replicazione condizionale
+- RepNotify pattern per aggiornamenti real-time
+- Enhanced Input System
+- RPC validation e sicurezza
+
+### In Sviluppo 🔨
+- Polish UI obiettivi (animazioni, design finale)
+- Sistema combattimento (dadi, attacco, difesa)
+- Testing multiplayer estensivo
+- Bilanciamento obiettivi
+
+### Prossimi Step 📅
+- Sistema fortificazione
+- Carte territorio
+- Fine partita con classifica
+- Statistiche e replay
+- Achievement
+
+---
+
+## 📊 Metriche Progetto
+
+- **Linee di codice C++:** ~2500+
+- **Sistemi core:** 8+
+- **Widget UI:** 4 (C++ base classes)
+- **Documentazione:** 1400+ righe markdown
+- **File documentazione:** 12 file
+
+---
+
+## 🛠️ Stack Tecnologico
+
+- **Engine:** Unreal Engine 5
+- **Linguaggi:** C++ (core) + Blueprint (visuals)
+- **Networking:** UE Replication Framework
+- **Input:** Enhanced Input System
+- **UI:** UMG (Unreal Motion Graphics)
+- **Data:** DataAssets, Structs, Enums
+
+---
+
+## 🏆 Highlights Tecnici
+
+**Server-Authoritative Architecture**
+Tutte le decisioni di gameplay sul server. Client inviano richieste, server valida.
+
+**Conditional Replication (COND_OwnerOnly)**
+Obiettivi segreti replicati solo al proprietario. Sicurezza garantita a livello engine.
+
+**RepNotify + Event Dispatcher**
+UI si aggiorna automaticamente quando dati cambiano. Zero polling, massima reattività.
+
+**Data-Driven Design**
+Obiettivi, continenti, territori configurabili tramite DataAssets. Nessun hardcoding.
+
+**Deterministic Generation**
+Mappa e obiettivi generati con seed fisso. Stessi risultati su tutti i client.
+
+**Type-Safe C++**
+Struct e enum per validazione compile-time. Meno bug, più refactoring sicuro.
+
+**Hybrid C++/Blueprint**
+Logica in C++ (testabile, performante), visuals in BP (iterazione rapida).

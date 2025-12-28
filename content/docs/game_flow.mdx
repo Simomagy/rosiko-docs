@@ -1,0 +1,337 @@
+---
+title: Game Flow
+description: Flusso completo di una partita dall'inizio alla fine
+---
+
+## Panoramica
+Questo documento descrive il flusso completo di una partita di Rosiko dall'inizio alla fine.
+
+---
+
+## Fase 1: Lobby (WaitingForPlayers)
+
+### Server
+```
+GameMode crea GameManager
+↓
+GameManager inizializza configurazioni
+↓
+Attende connessione giocatori
+↓
+Ogni giocatore che si connette riceve PlayerState
+```
+
+### Client
+```
+Connessione al server
+↓
+Riceve PlayerState con GameManagerPlayerID
+↓
+Mostra schermata lobby
+↓
+Attende inizio partita
+```
+
+**Condizione Avanzamento:**
+Numero minimo giocatori connessi (es. 3+).
+
+---
+
+## Fase 2: Selezione Colori (ColorSelection)
+
+### Server
+```
+ChangePhase(ColorSelection)
+↓
+Multicast notifica a tutti i client
+```
+
+### Client
+```
+Mostra UI selezione colori
+↓
+Player sceglie colore
+↓
+Server_SelectPlayerColor(PlayerID, Color)
+```
+
+### Server Validation
+```
+Riceve richiesta selezione
+↓
+Valida:
+  - È il turno di questo player?
+  - Colore disponibile?
+  - Player non ha già scelto?
+↓
+Se OK:
+  - PlayerState.SetArmyColor(Color)
+  - Rimuovi colore da disponibili
+  - Prossimo player
+```
+
+**Condizione Avanzamento:**
+Tutti i giocatori hanno scelto colore.
+
+### Trigger Assegnazione Obiettivi
+```
+Ultimo player sceglie colore
+↓
+GameManager.AssignObjectivesToAllPlayers()
+↓
+Filtra obiettivi validi
+↓
+Shuffle deterministico
+↓
+Assegna a ogni PlayerState
+↓
+Replicazione (COND_OwnerOnly)
+↓
+Client ricevono obiettivi
+↓
+OnRep triggera UI update
+```
+
+---
+
+## Fase 3: Distribuzione Iniziale (InitialDistribution)
+
+### Server
+```
+ChangePhase(InitialDistribution)
+↓
+DistributeInitialTerritories():
+  - Shuffle territori
+  - Assegna round-robin ai giocatori
+  - Ogni territorio parte con 1 armata
+↓
+Calcola truppe extra da piazzare:
+  - In base a numero giocatori
+  - Sottratto territori già posseduti
+↓
+PlayerState.TroopsToPlace = Extra
+```
+
+### Client
+```
+Mostra mappa
+↓
+Territories aggiornati con owner/color
+↓
+UI mostra "Piazza X truppe rimanenti"
+↓
+Player clicca territorio proprio
+↓
+Server_PlaceTroops(PlayerID, TerritoryID, 1)
+```
+
+### Server
+```
+Valida piazzamento:
+  - È turno del player?
+  - Territorio appartiene al player?
+  - Ha truppe da piazzare?
+↓
+Se OK:
+  - TerritoryActor.ArmyCount++
+  - PlayerState.TroopsToPlace--
+  - Se 0 → prossimo player
+```
+
+**Condizione Avanzamento:**
+Tutti i giocatori hanno piazzato tutte le truppe.
+
+---
+
+## Fase 4: Turni di Gioco
+
+Ogni turno ha 3 sotto-fasi:
+
+### 4A: Reinforcement (Rinforzi)
+```
+Inizio turno player X
+↓
+Calcola rinforzi:
+  - Base: Territori ÷ 3 (min 3)
+  - Bonus: Continenti controllati
+  - Bonus: Carte territorio (futuro)
+↓
+PlayerState.TroopsToPlace = Rinforzi
+↓
+Player piazza truppe sui propri territori
+↓
+Quando TroopsToPlace = 0 → Fase Combat
+```
+
+### 4B: Combat (Attacco)
+```
+Player può attaccare territori adiacenti nemici
+↓
+Player seleziona territorio attaccante
+↓
+Player seleziona territorio difensore
+↓
+Server_Attack(AttackerID, DefenderID, NumDice)
+↓
+Server simula combattimento (dadi)
+↓
+Aggiorna armate in base a risultato
+↓
+Se difensore ridotto a 0:
+  - Conquista territorio
+  - Controlla vittoria (obiettivi)
+↓
+Player può continuare ad attaccare
+↓
+Quando finito → Fase Fortification
+```
+
+### 4C: Fortification (Fortificazione)
+```
+Player può spostare armate tra propri territori adiacenti
+↓
+Player seleziona territorio sorgente
+↓
+Player seleziona territorio destinazione
+↓
+Player sceglie quante armate spostare
+↓
+Server_Fortify(SourceID, DestID, Amount)
+↓
+Server valida e esegue
+↓
+Player clicca "Fine Turno"
+↓
+GameManager.EndTurn()
+```
+
+### Fine Turno
+```
+GameManager.EndTurn()
+↓
+CheckPlayerObjectives(CurrentPlayer):
+  - Valuta obiettivo principale
+  - Valuta obiettivi secondari
+  - Se principale completato → VITTORIA
+  - Se secondari completati → +Punti
+↓
+ControllaEliminazioni():
+  - Se player perde ultimo territorio
+  - Marca come eliminato
+  - Rimuovi da TurnOrder
+↓
+ProssimoGiocatore():
+  - CurrentPlayerTurn++
+  - Skip giocatori eliminati
+  - Torna a Fase Reinforcement
+```
+
+---
+
+## Fase 5: Fine Partita (GameOver)
+
+### Condizioni Vittoria
+
+**A) Obiettivo Principale Completato**
+```
+Player completa obiettivo principale
+↓
+GameManager.CheckPlayerObjectives() rileva
+↓
+ChangePhase(GameOver)
+↓
+Multicast_NotifyVictory(WinnerPlayerID, "Main Objective")
+↓
+Mostra schermata vittoria
+```
+
+**B) Ultimo Sopravvissuto**
+```
+Tutti gli altri player eliminati
+↓
+GameManager rileva 1 solo player rimasto
+↓
+ChangePhase(GameOver)
+↓
+Multicast_NotifyVictory(LastPlayerID, "Survival")
+```
+
+**C) Tempo/Round Limite (Futuro)**
+```
+Raggiunto round N o tempo X
+↓
+Calcola punti vittoria di tutti
+↓
+Vince chi ha più punti
+↓
+ChangePhase(GameOver)
+↓
+Multicast_NotifyVictory(TopPlayerID, "Victory Points")
+```
+
+### Schermata Finale
+```
+Mostra:
+  - Vincitore
+  - Classifica finale
+  - Statistiche (turni, battaglie, territori conquistati)
+  - Obiettivi completati
+  - Bottone "Torna a Lobby" / "Nuova Partita"
+```
+
+---
+
+## Diagramma Stati
+
+```
+WaitingForPlayers
+       ↓
+ColorSelection
+       ↓
+   (Assegna Obiettivi)
+       ↓
+InitialDistribution
+       ↓
+   ┌──────────┐
+   │ GAME LOOP  │
+   └──────────┘
+       ↓
+ReinforcementPlacement
+       ↓
+     Combat
+       ↓
+  Fortification
+       ↓
+   Check Vittoria?
+   /           \
+No             Sì
+│               ↓
+Turno     GameOver
+Successivo
+│
+└──────────────┐
+            │
+ ←──────────┘
+```
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Lobby e connessione
+- Selezione colori
+- Assegnazione obiettivi
+- Distribuzione iniziale
+- Piazzamento truppe
+- Check obiettivi fine turno
+
+🔨 In sviluppo:
+- Sistema combattimento completo
+- Fortificazione
+- Fine partita con classifica
+
+📅 Futuro:
+- Carte territorio
+- Timer turni
+- Modalità varianti

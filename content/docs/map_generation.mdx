@@ -1,0 +1,199 @@
+---
+title: Map Generation
+description: Sistema di generazione dinamica della mappa di gioco
+---
+
+## Obiettivo
+Generare dinamicamente la mappa di gioco con territori, connessioni e continenti.
+
+---
+
+## Approccio Attuale
+
+### Client-Side Generation
+Ogni client genera la propria mappa localmente.
+
+**Vantaggi:**
+- Zero bandwidth per mappa
+- Nessun ritardo spawn
+- Scalabile
+
+**Requisiti:**
+- Determinismo assoluto
+- Stesso seed su tutti i client
+- Stesso algoritmo
+
+### Seed Sincronizzato
+GameMode invia seed a tutti i client:
+```cpp
+int32 MapSeed = 12345; // Fisso o da config
+Client_GenerateMap(MapSeed);
+```
+
+Ogni client usa stesso seed → stessa mappa.
+
+---
+
+## Fasi Generazione
+
+### 1. Spawn Territory Actors
+```
+FRandomStream Random(Seed);
+
+For each territory ID (0-41):
+  → Spawn ATerritoryActor
+  → Posizione basata su layout predefinito o procedurale
+  → Assegna continente
+  → Configura mesh/materiali
+```
+
+### 2. Setup Adiacenze
+```
+For each territory:
+  → Calcola adiacenze (da data o geometria)
+  → Crea collegamenti visivi
+  → Memorizza IDs adiacenti
+```
+
+### 3. Assegna Continenti
+```
+For each continent:
+  → Gruppa territori appartenenti
+  → Assegna bonus truppe
+  → Colora regione
+```
+
+### 4. Notifica Server
+```
+Client genera mappa
+↓
+Chiama Server_NotifyClientReady()
+↓
+Server aspetta tutti i client
+↓
+Quando tutti pronti → Start gioco
+```
+
+---
+
+## Struttura Territori
+
+### ATerritoryActor
+```cpp
+int32 TerritoryID;           // Unique ID
+FString TerritoryName;       // "Alaska", "Kamchatka"...
+int32 ContinentID;           // 0=Europa, 1=Asia...
+TArray<int32> AdjacentIDs;   // Territori confinanti
+
+// Runtime state (replicato)
+int32 OwnerPlayerID;         // Chi possiede (-1 = nessuno)
+int32 ArmyCount;             // Quante armate
+```
+
+**Mesh:**
+StaticMesh visualizza il territorio sulla mappa 3D.
+
+**Material:**
+Dynamic material cambia colore in base al proprietario.
+
+---
+
+## Continenti
+
+### Definizione
+```cpp
+enum EContinentID {
+    NorthAmerica = 0,
+    SouthAmerica = 1,
+    Europe = 2,
+    Africa = 3,
+    Asia = 4,
+    Oceania = 5
+};
+
+struct FContinentDefinition {
+    int32 ID;
+    FString Name;
+    TArray<int32> TerritoryIDs;
+    int32 BonusTroops;  // Bonus se controlli tutto
+};
+```
+
+### Bonus
+Se controlli tutti i territori di un continente:
+- Nord America: +5 truppe/turno
+- Europa: +5
+- Asia: +7
+- Africa: +3
+- Sud America: +2
+- Oceania: +2
+
+---
+
+## Determinismo
+
+### Problema
+Generazione casuale deve dare stesso risultato su tutti i client.
+
+### Soluzione: FRandomStream
+```cpp
+FRandomStream Rng(Seed);
+
+// Ogni chiamata è deterministica
+int32 Value = Rng.RandRange(0, 100);
+```
+
+Stesso seed → stessa sequenza.
+
+**Attenzione:**
+Non usare `FMath::Rand()` - non deterministico!
+
+---
+
+## Layout Mappa
+
+### Opzione A: Predefinito
+Posizioni territori hardcoded.
+Rapido, affidabile, sempre uguale.
+
+### Opzione B: Procedurale
+Algoritmo genera posizioni:
+- Voronoi diagram
+- Delaunay triangulation
+- Noise-based placement
+
+Più vario, richiede seed sincronizzato.
+
+### Opzione C: Ibrida (Attuale)
+Layout base predefinito.
+Piccole variazioni procedurali (rotazioni, scale).
+
+---
+
+## Visualizzazione 3D
+
+### Rendering
+- Ogni territorio = StaticMesh
+- Material dinamico per colore owner
+- Outline per selezione
+- Hover effects
+
+### Camera
+- Vista isometrica o strategica
+- Zoom/Pan controllabile
+- Focus su territorio selezionato
+
+---
+
+## Stato Implementazione
+
+✅ Base funzionante:
+- Spawn territori
+- Adiacenze
+- Materiali dinamici
+
+🔧 Da migliorare:
+- Layout procedurale vero
+- Mesh territori custom
+- Effetti visivi (fog of war, highlight)
+- Minimap

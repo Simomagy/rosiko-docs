@@ -1,0 +1,130 @@
+---
+title: GameState
+description: Informazioni sulla partita visibili a tutti i giocatori
+---
+
+## Ruolo
+Il **GameState** contiene tutte le informazioni sulla partita visibili a tutti i giocatori.
+
+---
+
+## Dati Replicati (Pubblici)
+
+### Stato Partita
+```cpp
+EGamePhase CurrentPhase;           // Fase corrente
+int32 CurrentPlayerTurn;           // Index giocatore corrente
+float GameTimeSeconds;             // Tempo totale partita
+int32 TurnNumber;                  // Numero turno globale
+```
+
+### Configurazione
+```cpp
+int32 NumPlayers;                  // Giocatori in partita
+TArray<FLinearColor> AvailableColors; // Colori disponibili
+TArray<int32> TurnOrder;           // Ordine turni
+```
+
+### Statistiche
+```cpp
+int32 TotalTerritories;            // Territori sulla mappa
+int32 TotalContinents;             // Continenti disponibili
+TMap<int32, int32> ContinentBonuses; // Bonus truppe per continente
+```
+
+---
+
+## Fasi di Gioco
+
+### EGamePhase Enum
+```cpp
+WaitingForPlayers      // Lobby, attesa connessioni
+ColorSelection         // Scelta colori esercito
+InitialDistribution    // Assegnazione territori iniziali
+ReinforcementPlacement // Piazzamento rinforzi turno
+Combat                 // Fase attacco
+Fortification          // Spostamento truppe fine turno
+GameOver               // Partita terminata
+```
+
+Ogni client legge `CurrentPhase` per sapere cosa può fare.
+
+---
+
+## Utilizzo Client-Side
+
+### UI Updates
+```cpp
+// Client legge fase per mostrare UI corretta
+switch (GameState->CurrentPhase) {
+    case ColorSelection:
+        ShowColorSelectionUI();
+        break;
+    case Combat:
+        ShowCombatUI();
+        break;
+    // ...
+}
+```
+
+### Input Filtering
+```cpp
+// Disabilita input se non è il tuo turno
+if (GameState->CurrentPlayerTurn != MyPlayerID) {
+    DisableGameplayInput();
+}
+```
+
+### Timer/Feedback
+```cpp
+// Mostra quanto dura la partita
+FString Time = FormatTime(GameState->GameTimeSeconds);
+TimerWidget->SetText(Time);
+```
+
+---
+
+## Differenza con PlayerState
+
+**GameState:**
+- 1 solo per partita
+- Dati globali
+- Visibile a tutti
+- Fase, turno, tempo
+
+**PlayerState:**
+- 1 per giocatore
+- Dati player-specific
+- Alcuni privati (obiettivi)
+- Truppe, territori, colore
+
+---
+
+## Replicazione
+
+Tutto nel GameState è replicato senza condizioni.
+Ogni client ha sempre una copia aggiornata.
+
+RepNotify può essere usato per eventi:
+```cpp
+UPROPERTY(ReplicatedUsing = OnRep_CurrentPhase)
+EGamePhase CurrentPhase;
+
+UFUNCTION()
+void OnRep_CurrentPhase() {
+    // UI update, suoni, transizioni
+}
+```
+
+---
+
+## Stato Implementazione
+
+✅ Parzialmente implementato:
+- Fase e turno corrente
+- Ordine turni
+
+🔧 Da completare:
+- Timer partita
+- Statistiche avanzate
+- RepNotify per cambio fase

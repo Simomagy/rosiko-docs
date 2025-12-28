@@ -1,0 +1,147 @@
+---
+title: PlayerController
+description: Gestione dell'input del giocatore e comunicazione con il server
+---
+
+## Ruolo
+Il **PlayerController** gestisce l'input del giocatore e traduce le azioni dell'utente in comandi validati inviati al server.
+
+---
+
+## Sistema Input
+
+### Enhanced Input System
+Utilizziamo il nuovo sistema UE5 Enhanced Input:
+
+**Input Mapping Context (IMC_Game):**
+- `IA_ToggleObjectives` → Tab - Mostra/nascondi pannello obiettivi
+- `IA_SelectTerritory` → Click - Seleziona territorio
+- `IA_ConfirmAction` → Enter - Conferma azione
+- `IA_CancelAction` → Esc - Annulla
+
+**Registrazione Automatica:**
+Il controller registra l'IMC in `BeginPlay()` automaticamente.
+Nessun setup manuale richiesto, basta assegnare in Blueprint.
+
+---
+
+## Server RPC
+
+Tutti i comandi di gameplay passano attraverso Server RPC validati.
+
+### Server_SelectPlayerColor
+```cpp
+UFUNCTION(Server, Reliable, WithValidation)
+void Server_SelectPlayerColor(int32 PlayerID, FLinearColor ChosenColor);
+```
+
+**Validazione:**
+- Client può selezionare solo per il proprio PlayerID
+- Previene cheating (player che sceglie per altri)
+- Log tentativi sospetti
+
+### Server_PlaceTroops
+```cpp
+UFUNCTION(Server, Reliable, WithValidation)
+void Server_PlaceTroops(int32 PlayerID, int32 TerritoryID, int32 Amount);
+```
+
+**Validazione:**
+- Amount > 0
+- PlayerID valido
+- TerritoryID esistente
+
+Validazione dettagliata avviene nel GameManager.
+
+### Server_NotifyClientReady
+```cpp
+UFUNCTION(Server, Reliable)
+void Server_NotifyClientReady();
+```
+
+Chiamato quando client completa generazione mappa.
+Notifica GameMode che player è pronto per iniziare.
+
+---
+
+## UI Commands (Local)
+
+### ToggleObjectivesPanel
+```cpp
+void ToggleObjectivesPanel(const FInputActionValue& Value);
+```
+
+Chiamato quando player preme Tab.
+Comando locale, non passa dal server.
+
+**Implementazione:**
+- Trova widget HUD
+- Toggle visibility pannello obiettivi
+- Opzionalmente: suono/animazione
+
+---
+
+## Setup in Blueprint
+
+### Class Defaults (BP_PlayerController)
+```
+Game Mapping Context → IMC_Game
+Toggle Objectives Action → IA_ToggleObjectives
+Game Mapping Priority → 0
+```
+
+Il C++ gestisce il resto automaticamente.
+
+---
+
+## Architettura
+
+**Client-Side:**
+- Input handling
+- UI interaction
+- Local feedback (suoni, animazioni)
+
+**Server-Side:**
+- RPC validation
+- Forward a GameManager
+- Authority checks
+
+**Separation of Concerns:**
+Controller = Input + RPC
+GameManager = Logica + Validazione
+
+---
+
+## Sicurezza
+
+### Owner Validation
+Ogni RPC verifica:
+```cpp
+if (PS->GameManagerPlayerID != PlayerID) {
+    // CHEATING ATTEMPT - Log e ignora
+    return;
+}
+```
+
+Client non può mai agire per altri giocatori.
+
+### Soft Validation
+Validazione RPC è "soft" - non disconnette.
+Validazione gameplay è nel GameManager.
+
+Previene disconnessioni accidentali da lag/bug.
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Enhanced Input setup
+- RPC base (colore, piazzamento)
+- Toggle obiettivi
+- Validazione owner
+
+🔧 Da fare:
+- RPC attacco/difesa
+- RPC fortificazione
+- Input touch/gamepad

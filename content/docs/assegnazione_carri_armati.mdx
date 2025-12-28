@@ -1,0 +1,304 @@
+---
+title: Assegnazione Carri Armati
+description: Sistema di calcolo e assegnazione truppe iniziali
+---
+
+## Panoramica
+Sistema di calcolo e assegnazione truppe (carri armati) iniziali in base al numero di giocatori, seguendo le regole ufficiali ROSIKO.
+
+---
+
+## Quando Avviene
+
+### Fase: Inizializzazione Gioco
+Le truppe vengono assegnate durante `InitializePlayers()`, **prima** della selezione colori:
+
+```
+InitializePlayers()  ← QUI (truppe assegnate)
+↓
+ColorSelection (giocatori scelgono colori)
+↓
+Assegnazione Obiettivi
+↓
+Distribuzione Territori (truppe consumate per reclamare)
+↓
+Initial Placement (truppe rimanenti piazzate)
+```
+
+---
+
+## Tabella Ufficiale ROSIKO
+
+### PlayerDistributionRules
+La distribuzione è configurata in `UGameRulesConfig`:
+
+```cpp
+TArray<FPlayerDistributionRule> PlayerDistributionRules = {
+    { 3, 55, 23 },  // 3 giocatori: 55 carri, ~23 territori/giocatore
+    { 4, 50, 17 },  // 4 giocatori: 50 carri, ~17 territori/giocatore
+    { 5, 45, 14 },  // 5 giocatori: 45 carri, ~14 territori/giocatore
+    { 6, 40, 11 },  // 6 giocatori: 40 carri, ~11 territori/giocatore
+    { 7, 35, 10 },  // 7 giocatori: 35 carri, ~10 territori/giocatore
+    { 8, 30, 9 },   // 8 giocatori: 30 carri, ~9 territori/giocatore
+    { 9, 25, 8 },   // 9 giocatori: 25 carri, ~8 territori/giocatore
+    { 10, 20, 7 }   // 10 giocatori: 20 carri, ~7 territori/giocatore
+};
+```
+
+### Struttura FPlayerDistributionRule
+```cpp
+struct FPlayerDistributionRule {
+    int32 NumPlayers;                    // Numero giocatori
+    int32 InitialTroops;                 // Carri armati iniziali
+    int32 ApproxTerritoriesPerPlayer;    // Territori medi per giocatore (indicativo)
+};
+```
+
+---
+
+## Algoritmo di Calcolo
+
+### GetTroopsForPlayerCount()
+```cpp
+int32 UGameRulesConfig::GetTroopsForPlayerCount(int32 NumPlayers) const
+{
+    // Se custom mode
+    if (bUseCustomTroopCount) {
+        return CustomTroopsPerPlayer;
+    }
+
+    // Cerca nella tabella ufficiale
+    for (const FPlayerDistributionRule& Rule : PlayerDistributionRules) {
+        if (Rule.NumPlayers == NumPlayers) {
+            return Rule.InitialTroops;
+        }
+    }
+
+    // Fallback: calcolo proporzionale
+    // Formula: ~220 carri totali / NumPlayers
+    return FMath::Max(10, 220 / NumPlayers);
+}
+```
+
+### Fallback per Numeri Non Standard
+Se il numero giocatori non è nella tabella (es. 11 giocatori):
+
+```
+Carri = Max(10, 220 / NumPlayers)
+Carri = Max(10, 220 / 11) = Max(10, 20) = 20
+```
+
+**Formula basata su:**
+- Media ~220 carri totali per partite 3-10 giocatori
+- Minimo garantito: 10 carri
+
+---
+
+## Assegnazione ai Giocatori
+
+### InitializePlayers()
+```cpp
+void ARosikoGameManager::InitializePlayers()
+{
+    // 1. Calcola truppe per numero giocatori
+    int32 TroopsPerPlayer = GameRules->GetTroopsForPlayerCount(NumPlayers);
+
+    // 2. Ottieni tutti i PlayerStates
+    TArray<ARosikoPlayerState*> PlayerStates = GetAllPlayerStates();
+
+    // 3. Assegna truppe a ogni player
+    for (ARosikoPlayerState* PS : PlayerStates) {
+        if (!PS) continue;
+
+        PS->TroopsToPlace = TroopsPerPlayer;
+        PS->bIsAlive = true;
+        PS->bIsAI = false;
+        PS->CardExchangeCount = 0;
+        PS->bHasSelectedColor = false;
+        PS->ArmyColor = FLinearColor::White;  // Placeholder
+
+        UE_LOG(..., Log, TEXT("Initialized Player %d (%s) - %d troops"),
+               PS->GameManagerPlayerID, *PS->GetPlayerName(), TroopsPerPlayer);
+    }
+}
+```
+
+### Esempio Log
+```
+Initialized Player 0 (Alice) - 50 troops
+Initialized Player 1 (Bob) - 50 troops
+Initialized Player 2 (Charlie) - 50 troops
+Initialized Player 3 (David) - 50 troops
+Initialized 4 players, 50 troops each, 6 colors available
+```
+
+---
+
+## Consumo Truppe
+
+### Fase 1: Reclamare Territori
+Durante `DistributeInitialTerritories()`:
+
+```cpp
+Territory->Troops = 1;        // Piazza 1 carro sul territorio
+PS->RemoveTroops(1);          // Consuma 1 carro dal pool
+```
+
+Ogni territorio assegnato consuma 1 carro.
+
+### Fase 2: Truppe Residue
+Dopo distribuzione territori:
+
+```
+Truppe Iniziali: 50
+- Territori posseduti: 17
+= Truppe rimanenti: 33
+```
+
+### Fase 3: Piazzamento Manuale
+In `InitialDistribution` phase, il player piazza le truppe rimanenti:
+
+```cpp
+bool PlaceTroops(int32 PlayerID, int32 TerritoryID, int32 Amount)
+{
+    // Validazioni
+    if (PS->TroopsToPlace < Amount) {
+        return false;  // Non abbastanza truppe
+    }
+
+    // Piazzamento
+    Territory->Troops += Amount;
+    PS->RemoveTroops(Amount);
+
+    // Auto-avanzamento se finito
+    if (PS->TroopsToPlace <= 0) {
+        EndTurn();
+    }
+}
+```
+
+---
+
+## Esempi Dettagliati
+
+### Partita a 3 Giocatori
+**Setup:**
+- Giocatori: 3
+- Territori totali: 70
+- Carri per giocatore: **55**
+
+**Distribuzione:**
+- Player 1: 23 territori → Usa 23 carri → Rimangono **32 carri**
+- Player 2: 23 territori → Usa 23 carri → Rimangono **32 carri**
+- Player 3: 24 territori → Usa 24 carri → Rimangono **31 carri**
+
+**Totale carri sulla mappa a fine setup:**
+```
+(23 + 23 + 24)        // Carri per reclamare
++ (32 + 32 + 31)      // Carri piazzati manualmente
+= 165 carri totali
+```
+
+### Partita a 6 Giocatori
+**Setup:**
+- Giocatori: 6
+- Territori totali: 70
+- Carri per giocatore: **40**
+
+**Distribuzione:**
+- Territori per giocatore: ~11-12
+- Carri usati per reclamare: ~11-12
+- Carri rimanenti: ~28-29
+
+**Totale carri sulla mappa:**
+```
+70                    // Territori (1 carro ciascuno)
++ (28*4 + 29*2)       // Carri extra piazzati
+= 70 + 170 = 240 carri totali
+```
+
+---
+
+## Modalità Custom
+
+### bUseCustomTroopCount
+Se abilitato, ignora la tabella ufficiale:
+
+```cpp
+UPROPERTY(EditAnywhere, Category = "Initial Setup|Custom")
+bool bUseCustomTroopCount = false;
+
+UPROPERTY(EditAnywhere, Category = "Initial Setup|Custom",
+          meta = (EditCondition = "bUseCustomTroopCount", ClampMin = "1"))
+int32 CustomTroopsPerPlayer = 50;
+```
+
+**Uso:**
+- Modalità custom/test
+- Bilanciamento personalizzato
+- Mappe speciali
+
+---
+
+## Replicazione
+
+### PlayerState.TroopsToPlace
+```cpp
+UPROPERTY(Replicated, BlueprintReadOnly)
+int32 TroopsToPlace;
+```
+
+Replicato a tutti i client.
+Ogni player e spettatore può vedere quante truppe hanno gli altri da piazzare.
+
+### Aggiornamenti
+Ogni volta che truppe vengono piazzate o consumate:
+
+```cpp
+PS->RemoveTroops(Amount);
+BroadcastPlayerUpdate(PlayerID);
+```
+
+Il server notifica tutti i client del cambio.
+
+---
+
+## Bilanciamento
+
+### Perché 55 per 3 Giocatori?
+```
+Territori: 70
+Giocatori: 3
+Territori per player: ~23
+
+Carri iniziali: 55
+- Carri per reclamare: 23
+= Carri extra: 32
+
+Densità media: 32/23 ≈ 1.4 carri extra per territorio
+Armate medie per territorio: 1 + 1.4 = 2.4
+```
+
+**Più giocatori → meno carri:**
+- Più giocatori → meno territori per player
+- Meno territori → meno carri necessari
+- 10 giocatori: 20 carri (7 territori → 13 extra → densità ~1.9)
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Tabella ufficiale ROSIKO (3-10 giocatori)
+- Calcolo automatico truppe
+- Fallback per numeri non standard
+- Modalità custom
+- Consumo truppe per reclamare territori
+- Piazzamento manuale truppe residue
+- Validazioni complete
+- Replicazione
+
+🔧 Future implementazioni:
+- Tabelle diverse per modalità varianti
+- Bonus truppe per condizioni speciali
+- Sistema carte territorio (rinforzi extra)

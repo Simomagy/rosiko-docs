@@ -1,0 +1,428 @@
+---
+title: Assegnazione Obiettivi
+description: Sistema di assegnazione automatica degli obiettivi con filtri e shuffle
+---
+
+## Panoramica
+Sistema di assegnazione automatica degli obiettivi (principale + secondari) a ogni giocatore, con filtri di validità e shuffle deterministico.
+
+---
+
+## Quando Avviene
+
+### Trigger: Fine Selezione Colori
+Gli obiettivi vengono assegnati **immediatamente dopo** che tutti i giocatori hanno scelto il colore:
+
+```
+Ultimo player sceglie colore
+↓
+AssignObjectivesToAllPlayers()  ← QUI
+↓
+DistributeInitialTerritories()
+↓
+ChangePhase(InitialDistribution)
+```
+
+**Timing Critico:**
+- PRIMA della distribuzione territori
+- DOPO la selezione colori (serve per filtri)
+
+---
+
+## Algoritmo Completo
+
+### Step 1: Filtraggio Obiettivi Validi
+```cpp
+void FilterAndShuffleObjectives()
+{
+    // Ottieni colori attivi
+    TArray<FLinearColor> ActiveColors;
+    for (ARosikoPlayerState* PS : AllPlayers) {
+        if (PS && PS->bHasSelectedColor) {
+            ActiveColors.Add(PS->ArmyColor);
+        }
+    }
+
+    // Filtra obiettivi validi
+    ValidMainObjectives = ObjectivesConfig->FilterValidMainObjectives(
+        NumPlayers, ActiveColors
+    );
+    ValidSecondaryObjectives = ObjectivesConfig->FilterValidSecondaryObjectives(
+        NumPlayers, ActiveColors
+    );
+}
+```
+
+### Filtri Applicati
+**Per ogni obiettivo, verifica:**
+
+1. **MinPlayers / MaxPlayers**
+   ```cpp
+   if (NumPlayers < Objective.MinPlayers ||
+       NumPlayers > Objective.MaxPlayers) {
+       // Obiettivo non valido per questo numero giocatori
+       continue;
+   }
+   ```
+
+2. **RequiredColors**
+   ```cpp
+   for (FLinearColor RequiredColor : Objective.RequiredColors) {
+       bool bFound = false;
+       for (FLinearColor ActiveColor : ActiveColors) {
+           if (ActiveColor.Equals(RequiredColor, 0.01f)) {
+               bFound = true;
+               break;
+           }
+       }
+       if (!bFound) {
+           // Obiettivo richiede un colore non in gioco
+           continue;
+       }
+   }
+   ```
+
+3. **RequiredContinents**
+   ```cpp
+   for (int32 RequiredContinent : Objective.RequiredContinents) {
+       if (!MapHasContinent(RequiredContinent)) {
+           // Obiettivo richiede un continente non sulla mappa
+           continue;
+       }
+   }
+   ```
+
+**Esempio:**
+- Obiettivo: "Elimina il giocatore Rosso"
+- Se nessun giocatore ha scelto Rosso → **obiettivo escluso**
+
+### Step 2: Shuffle Deterministico
+```cpp
+// Fisher-Yates shuffle per main objectives
+for (int32 i = ValidMainObjectives.Num() - 1; i > 0; i--) {
+    int32 j = GameRNG.RandRange(0, i);
+    ValidMainObjectives.Swap(i, j);
+}
+
+// Fisher-Yates shuffle per secondary objectives
+for (int32 i = ValidSecondaryObjectives.Num() - 1; i > 0; i--) {
+    int32 j = GameRNG.RandRange(0, i);
+    ValidSecondaryObjectives.Swap(i, j);
+}
+```
+
+**Deterministico:**
+- `GameRNG` = `FRandomStream` con seed fisso
+- Stesso seed → stessa sequenza su tutti i client
+- Cruciale per consistenza multiplayer
+
+### Step 3: Verifica Disponibilità
+```cpp
+// Verifica obiettivi principali
+if (ValidMainObjectives.Num() < NumPlayers &&
+    !ObjectivesConfig->bAllowDuplicateMainObjectives) {
+    UE_LOG(..., Error, TEXT("Not enough main objectives (%d) for %d players!"),
+           ValidMainObjectives.Num(), NumPlayers);
+    return;
+}
+
+// Verifica obiettivi secondari
+int32 RequiredSecondary = NumPlayers * ObjectivesConfig->NumSecondaryObjectivesPerPlayer;
+if (ValidSecondaryObjectives.Num() < RequiredSecondary &&
+    !ObjectivesConfig->bAllowDuplicateSecondaryObjectives) {
+    UE_LOG(..., Warning, TEXT("Not enough secondary objectives. Will allow duplicates."));
+}
+```
+
+### Step 4: Assegnazione a Ogni Player
+```cpp
+for (int32 PlayerID : GS->TurnOrder) {
+    ARosikoPlayerState* PS = GetRosikoPlayerState(PlayerID);
+    if (PS) {
+        AssignObjectivesToPlayer(PS);
+    }
+}
+```
+
+**Ordine:** Segue `TurnOrder` (ordine selezione colori).
+
+---
+
+## Assegnazione a Singolo Player
+
+### AssignObjectivesToPlayer()
+```cpp
+void AssignObjectivesToPlayer(ARosikoPlayerState* PS)
+{
+    int32 PlayerID = PS->GameManagerPlayerID;
+
+    // === OBIETTIVO PRINCIPALE ===
+    if (ValidMainObjectives.Num() > 0) {
+        int32 MainIndex = ObjectivesConfig->bAllowDuplicateMainObjectives
+            ? (PlayerID % ValidMainObjectives.Num())
+            : FMath::Min(PlayerID, ValidMainObjectives.Num() - 1);
+
+        PS->AssignMainObjective(ValidMainObjectives[MainIndex], MainIndex);
+    }
+
+    // === OBIETTIVI SECONDARI ===
+    int32 NumSecondariesToAssign = ObjectivesConfig->NumSecondaryObjectivesPerPlayer;
+
+    if (NumSecondariesToAssign > 0 && ValidSecondaryObjectives.Num() > 0) {
+        for (int32 i = 0; i < NumSecondariesToAssign; i++) {
+            int32 SecondaryIndex = ObjectivesConfig->bAllowDuplicateSecondaryObjectives
+                ? ((PlayerID * NumSecondariesToAssign + i) % ValidSecondaryObjectives.Num())
+                : FMath::Min(
+                    (PlayerID * NumSecondariesToAssign + i),
+                    ValidSecondaryObjectives.Num() - 1
+                );
+
+            PS->AssignSecondaryObjective(
+                ValidSecondaryObjectives[SecondaryIndex],
+                SecondaryIndex
+            );
+        }
+    }
+}
+```
+
+### Logica Index Principale
+
+**Se NO duplicati (default):**
+```cpp
+MainIndex = Min(PlayerID, ValidMainObjectives.Num() - 1)
+
+Esempio (4 obiettivi, 3 giocatori):
+Player 0 → Index 0 → Obiettivo A
+Player 1 → Index 1 → Obiettivo B
+Player 2 → Index 2 → Obiettivo C
+```
+
+**Se SI duplicati:**
+```cpp
+MainIndex = PlayerID % ValidMainObjectives.Num()
+
+Esempio (2 obiettivi, 4 giocatori):
+Player 0 → Index 0 → Obiettivo A
+Player 1 → Index 1 → Obiettivo B
+Player 2 → Index 0 → Obiettivo A (duplicato)
+Player 3 → Index 1 → Obiettivo B (duplicato)
+```
+
+### Logica Index Secondari
+
+**Se NO duplicati:**
+```cpp
+SecondaryIndex = Min(
+    (PlayerID * NumSecondariesToAssign + i),
+    ValidSecondaryObjectives.Num() - 1
+)
+
+Esempio (12 obiettivi, 3 giocatori, 4 secondari ciascuno):
+Player 0 → [0, 1, 2, 3]
+Player 1 → [4, 5, 6, 7]
+Player 2 → [8, 9, 10, 11]
+```
+
+**Se SI duplicati:**
+```cpp
+SecondaryIndex = (PlayerID * NumSecondariesToAssign + i) % ValidSecondaryObjectives.Num()
+
+Esempio (6 obiettivi, 3 giocatori, 4 secondari ciascuno):
+Player 0 → [0, 1, 2, 3]
+Player 1 → [4, 5, 0, 1]  // Wrap around
+Player 2 → [2, 3, 4, 5]  // Wrap around
+```
+
+---
+
+## Replicazione Sicura
+
+### COND_OwnerOnly
+```cpp
+DOREPLIFETIME_CONDITION(ARosikoPlayerState, MainObjective, COND_OwnerOnly);
+DOREPLIFETIME_CONDITION(ARosikoPlayerState, SecondaryObjectives, COND_OwnerOnly);
+```
+
+**Comportamento:**
+- Server invia obiettivi **solo al proprietario**
+- Altri client ricevono valori di default (ObjectiveIndex = -1)
+- **Impossibile** per altri player vedere i tuoi obiettivi
+
+### RepNotify Auto-Update UI
+```cpp
+UPROPERTY(ReplicatedUsing = OnRep_MainObjective)
+FAssignedObjective MainObjective;
+
+void OnRep_MainObjective() {
+    OnObjectivesUpdated.Broadcast();  // UI si aggiorna automaticamente
+}
+```
+
+---
+
+## Configurazione
+
+### ObjectivesConfig DataAsset
+
+```cpp
+UCLASS()
+class UObjectivesConfig : public UDataAsset
+{
+    // Pool obiettivi
+    UPROPERTY(EditAnywhere)
+    TArray<FObjectiveDefinition> MainObjectiveDeck;
+
+    UPROPERTY(EditAnywhere)
+    TArray<FObjectiveDefinition> SecondaryObjectiveDeck;
+
+    // Numero secondari per giocatore (0-10)
+    UPROPERTY(EditAnywhere, meta = (ClampMin = "0", ClampMax = "10"))
+    int32 NumSecondaryObjectivesPerPlayer = 4;
+
+    // Permetti duplicati?
+    UPROPERTY(EditAnywhere)
+    bool bAllowDuplicateMainObjectives = false;
+
+    UPROPERTY(EditAnywhere)
+    bool bAllowDuplicateSecondaryObjectives = false;
+
+    // Obiettivi secondari visibili a tutti?
+    UPROPERTY(EditAnywhere)
+    bool bKeepSecondariesSecret = false;  // (Not implemented yet)
+
+    // Seed per shuffle
+    UPROPERTY(EditAnywhere)
+    int32 ShuffleSeed = 12345;
+};
+```
+
+---
+
+## Struttura Obiettivi
+
+### FObjectiveDefinition (Config)
+```cpp
+struct FObjectiveDefinition
+{
+    FText DisplayName;                      // "Conquistatore d'Europa"
+    FText Description;                      // "Controlla Europa e Asia"
+    TArray<FObjectiveCondition> Conditions; // [ControlContinent(Europa), ControlContinent(Asia)]
+    int32 VictoryPoints;                    // 2 (per secondari)
+    bool bIsMainObjective;                  // true/false
+
+    // Filtri validità
+    int32 MinPlayers;                       // Es. 3
+    int32 MaxPlayers;                       // Es. 10
+    TArray<FLinearColor> RequiredColors;    // Es. [Rosso] per "Elimina Rosso"
+    TArray<int32> RequiredContinents;       // Es. [0, 1] per "Controlla Europa e Asia"
+};
+```
+
+### FAssignedObjective (Runtime)
+```cpp
+struct FAssignedObjective
+{
+    FObjectiveDefinition Definition;
+    bool bCompleted;
+    int32 CompletionTurn;
+    float CompletionTimeSeconds;
+    int32 ObjectiveIndex;  // ID nel deck originale (per tracking)
+};
+```
+
+---
+
+## Esempio Completo
+
+### Setup
+- **4 giocatori**
+- **Colori:** Rosso, Blu, Verde, Giallo
+- **Obiettivi Main validi:** 6 (dopo filtri)
+- **Obiettivi Secondary validi:** 12 (dopo filtri)
+- **Secondari per giocatore:** 4
+
+### Processo
+
+**1. Filtro:**
+```
+MainObjectiveDeck: 10 obiettivi
+- Obiettivo "Elimina Viola" → ESCLUSO (Viola non in gioco)
+- Obiettivo "Controlla Atlantis" → ESCLUSO (continente non esiste)
+- 8 obiettivi validi rimanenti
+
+SecondaryObjectiveDeck: 15 obiettivi
+- Obiettivo "2 giocatori only" → ESCLUSO (4 giocatori in partita)
+- 12 obiettivi validi rimanenti
+```
+
+**2. Shuffle con GameRNG:**
+```
+ValidMainObjectives = [Obj3, Obj1, Obj7, Obj2, Obj5, Obj9]  // Shuffled
+ValidSecondaryObjectives = [Obj4, Obj11, Obj2, ...]         // Shuffled
+```
+
+**3. Assegnazione:**
+```
+Player 0 (Rosso):
+  Main: ValidMainObjectives[0] = Obj3
+  Secondary: [Obj4, Obj11, Obj2, Obj8]
+
+Player 1 (Blu):
+  Main: ValidMainObjectives[1] = Obj1
+  Secondary: [Obj5, Obj12, Obj6, Obj9]
+
+Player 2 (Verde):
+  Main: ValidMainObjectives[2] = Obj7
+  Secondary: [Obj1, Obj7, Obj10, Obj3]
+
+Player 3 (Giallo):
+  Main: ValidMainObjectives[3] = Obj2
+  Secondary: [Obj13, Obj14, Obj15, Obj4]
+```
+
+**4. Replicazione:**
+```
+Server → Client Player 0: MainObjective = Obj3, SecondaryObjectives = [Obj4, ...]
+Server → Client Player 1: MainObjective = Obj1, SecondaryObjectives = [Obj5, ...]
+...
+```
+
+Ogni client riceve **solo i propri obiettivi**.
+
+---
+
+## Logging
+
+### Durante Assegnazione
+```
+Assigning objectives to all players...
+Filtered objectives: 6 main, 12 secondary
+Objectives shuffled with deterministic RNG
+Player 0 assigned Main Objective: "Conquer Europe and Asia" (Index: 3)
+Player 0 assigned Secondary 0: "Control 18 territories" (Index: 4)
+Player 0 assigned Secondary 1: "Have 5 territories with 3+ armies" (Index: 11)
+...
+Objectives assigned to all players successfully!
+```
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Filtri validità completi (players, colors, continents)
+- Shuffle deterministico (FRandomStream)
+- Assegnazione main + secondari configurabile
+- Supporto duplicati (opzionale)
+- Replicazione sicura (COND_OwnerOnly)
+- RepNotify per auto-update UI
+- Logging dettagliato
+- Integrazione con fase ColorSelection
+
+🔧 Future implementazioni:
+- Obiettivi secondari pubblici (bKeepSecondariesSecret)
+- Preview obiettivi prima di iniziare
+- Re-shuffle obiettivi (per partite successive)
+- Obiettivi dinamici (cambiano durante partita)
+- Achievement per obiettivi speciali

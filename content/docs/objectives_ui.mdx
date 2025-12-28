@@ -1,0 +1,308 @@
+---
+title: Objectives UI
+description: Sistema UI per visualizzare obiettivi e carte
+---
+
+## Architettura
+
+### Approccio Ibrido C++/Blueprint
+- **C++ Base Classes** - Logica, sicurezza, performance
+- **Blueprint Widgets** - Design visivo, animazioni, stile
+
+**Vantaggi:**
+✅ Type-safe data binding
+✅ Logica testabile in C++
+✅ Flessibilità artistica in BP
+✅ Auto-update senza polling
+
+---
+
+## Componenti
+
+### 1. ObjectivesPanelWidget
+**Pannello principale** contenente tutti gli obiettivi.
+
+**Responsabilità:**
+- Si connette al PlayerState locale
+- Crea dinamicamente le carte obiettivo
+- Ascolta `OnObjectivesUpdated` event
+- Refresh automatico quando obiettivi cambiano
+
+**Widget Bindings (Blueprint):**
+```
+MainObjectiveCard (UObjectiveCardWidget)
+SecondaryCardsContainer (UScrollBox)
+SecondariesTitle (UTextBlock)
+```
+
+**Flusso Inizializzazione:**
+```
+NativeConstruct()
+↓
+InitializePanel()
+↓
+Get PlayerState locale
+↓
+Bind OnObjectivesUpdated event
+↓
+Se obiettivi già assegnati → Popola UI
+Se non ancora → Nasconde, aspetta evento
+```
+
+**Auto-Update:**
+```
+PlayerState riceve obiettivi da server
+↓
+OnRep_MainObjective/SecondaryObjectives
+↓
+Broadcast OnObjectivesUpdated
+↓
+ObjectivesPanelWidget.OnPlayerObjectivesUpdated()
+↓
+InitializePanel() o RefreshAllCards()
+```
+
+**Configurazione:**
+```cpp
+SecondaryCardClass;        // Classe carta da creare
+CardSpacing = 10.0f;       // Spazio tra carte (px)
+AutoUpdateInterval = 0.5f; // Polling fallback (sec)
+```
+
+---
+
+### 2. ObjectiveCardWidget
+**Singola carta obiettivo** (principale o secondario).
+
+**Responsabilità:**
+- Mostra dati di un FAssignedObjective
+- Refresh quando stato cambia
+- Animazioni completamento
+- Stile diverso per tipo (main/secondary)
+
+**Widget Bindings (Blueprint):**
+```
+DisplayNameText (UTextBlock)     - Nome obiettivo
+DescriptionText (UTextBlock)     - Descrizione
+TypeText (UTextBlock)            - "PRINCIPALE" o "SECONDARIO"
+CompletionIcon (UImage)          - Icona check quando completato
+CardBorder (UBorder)             - Bordo (cambia colore)
+VictoryPointsText (UTextBlock)   - Punti (solo secondari)
+VictoryPointsBox (UHorizontalBox) - Container punti
+```
+
+**Colori Configurabili:**
+```cpp
+MainObjectiveColor = Oro
+SecondaryObjectiveColor = Argento
+NormalColor = Grigio
+CompletedColor = Verde
+```
+
+**Metodi:**
+```cpp
+SetObjectiveData(Objective, bIsMain);  // Imposta dati
+RefreshDisplay();                       // Refresh UI
+OnObjectiveCompleted();                 // Event BP per animazioni
+```
+
+---
+
+### 3. VictoryPointsWidget
+**Display punti vittoria** sempre visibile nell'HUD.
+
+**Responsabilità:**
+- Mostra punteggio corrente del giocatore
+- Si aggiorna automaticamente ogni 0.5s
+- Cambio colore dinamico basato su soglie
+
+**Widget Bindings (Blueprint):**
+```
+PointsText (UTextBlock)  - Numero punti
+PointsIcon (UImage)      - Icona stella
+```
+
+**Colori Dinamici:**
+```cpp
+0-2 pt   → Grigio   (pochi punti)
+3-5 pt   → Bianco   (medio)
+6-8 pt   → Giallo   (buono)
+9+ pt    → Oro      (ottimo)
+```
+
+**Auto-Update:**
+Polling ogni `UpdateInterval` secondi.
+Legge `PlayerState->GetTotalVictoryPoints()`.
+
+---
+
+### 4. ObjectiveNotificationWidget
+**Popup animato** quando completi un obiettivo.
+
+**Responsabilità:**
+- Mostra notifica "Obiettivo Completato!"
+- Animazione entrata/uscita
+- Suono/feedback
+- Auto-rimozione dopo N secondi
+
+**Widget Bindings (Blueprint):**
+```
+TitleText (UTextBlock)         - "Obiettivo Completato!"
+ObjectiveNameText (UTextBlock) - Nome obiettivo
+PointsText (UTextBlock)        - "+X Punti Vittoria"
+IconImage (UImage)             - Icona check
+```
+
+**Configurazione:**
+```cpp
+DisplayDuration = 3.0f;     // Secondi prima di scomparire
+CompletionSound;            // Sound asset
+SlideInAnimation;           // UWidgetAnimation
+SlideOutAnimation;          // UWidgetAnimation
+```
+
+**Flusso:**
+```
+PlayerState obiettivo completato
+↓
+ObjectivesPanel rileva cambio
+↓
+Broadcast OnObjectiveCompleted
+↓
+GameHUD in ascolto
+↓
+Crea ObjectiveNotificationWidget
+↓
+Aggiunge a viewport
+↓
+Play SlideInAnimation + Suono
+↓
+Timer 3 secondi
+↓
+Play SlideOutAnimation
+↓
+Remove da viewport
+```
+
+---
+
+## Event Flow
+
+### Caso 1: Assegnazione Iniziale
+```
+Server assegna obiettivi
+↓
+Replicazione a client (COND_OwnerOnly)
+↓
+OnRep_MainObjective/SecondaryObjectives
+↓
+Broadcast OnObjectivesUpdated
+↓
+ObjectivesPanelWidget riceve evento
+↓
+InitializePanel()
+↓
+Crea MainObjectiveCard
+↓
+Crea N SecondaryCards dinamicamente
+↓
+Pannello visibile e popolato
+```
+
+### Caso 2: Completamento Obiettivo
+```
+Server marca obiettivo completato
+↓
+Replicazione cambio bCompleted
+↓
+OnRep triggera OnObjectivesUpdated
+↓
+ObjectivesPanelWidget.UpdateObjectivesStatus()
+↓
+Rileva cambio stato
+↓
+Refresh ObjectiveCardWidget
+↓
+Carta cambia colore, mostra icona check
+↓
+Broadcast OnObjectiveCompleted
+↓
+GameHUD crea notifica popup
+```
+
+---
+
+## Implementazione Blueprint
+
+### BP_ObjectivesPanelWidget
+```
+Parent Class: ObjectivesPanelWidget (C++)
+
+Designer:
+  • Canvas Panel (root)
+    • Vertical Box
+      • Text "OBIETTIVI" (titolo)
+      • BP_ObjectiveCardWidget (MainObjectiveCard)
+      • Text "Secondari" (SecondariesTitle)
+      • Scroll Box (SecondaryCardsContainer)
+
+Class Defaults:
+  • Secondary Card Class = BP_ObjectiveCardWidget
+  • Card Spacing = 10
+  • Auto Update Interval = 0.5
+```
+
+### BP_ObjectiveCardWidget
+```
+Parent Class: ObjectiveCardWidget (C++)
+
+Designer:
+  • Border (CardBorder) - Bordo colorato
+    • Vertical Box
+      • Text Block (TypeText) - "PRINCIPALE"/"SECONDARIO"
+      • Text Block (DisplayNameText) - Nome
+      • Text Block (DescriptionText) - Descrizione
+      • Horizontal Box (VictoryPointsBox)
+        • Image (stella)
+        • Text Block (VictoryPointsText) - "3 pt"
+      • Image (CompletionIcon) - Check verde
+
+Animations:
+  • Completed_Anim - Scale pulse, color shift
+
+Event Graph:
+  • OnObjectiveCompleted → Play Completed_Anim
+```
+
+---
+
+## Performance
+
+**Zero Tick:**
+Nessun widget fa tick continuo. Solo event-driven.
+
+**Lazy Creation:**
+Carte secondarie create solo quando servono.
+
+**Smart Update:**
+Refresh solo se `bCompleted` effettivamente cambiato.
+
+**Memory:**
+~4KB per carta obiettivo. Max ~20KB per player.
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Tutti i 4 widget base C++
+- Sistema auto-update
+- Event dispatcher
+- RepNotify integration
+- Documentazione completa (650+ righe)
+
+🔧 Da fare:
+- Design visivo definitivo
+- Animazioni avanzate
+- Localizzazione testi
+- Accessibilità (scaling UI)

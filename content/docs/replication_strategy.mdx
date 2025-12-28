@@ -1,0 +1,271 @@
+---
+title: Replication Strategy
+description: Sistema di replicazione server-authoritative per multiplayer
+---
+
+## Filosofia
+
+**Server-Authoritative**
+Il server ha l'ultima parola su tutto.
+I client inviano richieste, il server valida ed esegue.
+
+**Deterministic**
+Stesso input + stesso stato = stesso risultato.
+Importante per shuffle obiettivi, combattimento, ecc.
+
+**Secure**
+Informazioni sensibili (obiettivi) replicate solo al proprietario.
+
+---
+
+## Layers di Replicazione
+
+### 1. GameState (Global)
+**Replicato a TUTTI i client.**
+
+Contiene:
+- Fase di gioco corrente
+- Turno corrente (quale giocatore)
+- Colori disponibili
+- Tempo di gioco
+- Configurazioni partita
+
+Usato per:
+- UI condivisa (timer, fase)
+- Decisioni client-side (disabilita input)
+
+### 2. PlayerState (Per-Player)
+**Replicato con condizioni.**
+
+**Public Data** (tutti vedono):
+- PlayerID
+- ArmyColor
+- TroopsToPlace
+- bIsEliminated
+- TerritoriesControlled
+
+**Private Data** (solo owner):
+- MainObjective (COND_OwnerOnly)
+- SecondaryObjectives (COND_OwnerOnly)
+
+Usato per:
+- UI player-specific
+- Validazioni
+- Obiettivi segreti
+
+### 3. Territory Actors (World)
+**Replicato a TUTTI.**
+
+Contiene:
+- OwnerPlayerID
+- ArmyCount
+- ContinentID
+- Adiacenze
+
+Usato per:
+- Rendering mappa
+- Calcoli obiettivi
+- UI tooltips
+
+---
+
+## Conditional Replication
+
+### COND_OwnerOnly
+```cpp
+DOREPLIFETIME_CONDITION(ARosikoPlayerState, MainObjective, COND_OwnerOnly);
+```
+
+**Comportamento:**
+- Server invia solo al client proprietario
+- Altri client ricevono valore di default
+- Perfetto per dati segreti
+
+**Esempio:**
+Player 1 ha obiettivo "Elimina Rosso".
+- Client Player 1 → vede "Elimina Rosso"
+- Client Player 2 → vede ObjectiveIndex = -1 (default)
+- Client Player 3 → vede ObjectiveIndex = -1 (default)
+
+Impossibile sniffare obiettivi altrui.
+
+---
+
+## RepNotify Pattern
+
+### Problema
+Come sa l'UI quando i dati cambiano?
+
+### Soluzione: RepNotify
+```cpp
+UPROPERTY(ReplicatedUsing = OnRep_MainObjective)
+FAssignedObjective MainObjective;
+
+UFUNCTION()
+void OnRep_MainObjective() {
+    // Chiamato automaticamente quando replica
+    OnObjectivesUpdated.Broadcast();
+}
+```
+
+**Vantaggi:**
+✅ Zero polling
+✅ Instant update
+✅ Decoupled (UI si binda ad evento)
+✅ Performance
+
+---
+
+## RPC Pattern
+
+### Client → Server (Server RPC)
+```cpp
+UFUNCTION(Server, Reliable, WithValidation)
+void Server_PlaceTroops(int32 PlayerID, int32 TerritoryID, int32 Amount);
+```
+
+**Reliable:** Garantito arrivo, in ordine.
+**WithValidation:** Funzione `_Validate` chiamata prima.
+
+**Flusso:**
+```
+Client chiama Server_PlaceTroops()
+↓
+Eseguito sul SERVER
+↓
+Validazione (controlli base)
+↓
+Se valido → _Implementation
+↓
+GameManager valida logica gameplay
+↓
+Se OK → Modifica stato
+↓
+Stato replicato automaticamente
+```
+
+### Server → Clients (Multicast RPC)
+```cpp
+UFUNCTION(NetMulticast, Reliable)
+void Multicast_NotifyPhaseChange(EGamePhase NewPhase);
+```
+
+**Eseguito su TUTTI i client.**
+
+Usato per:
+- Eventi globali (cambio fase, vittoria)
+- Effetti visivi sincronizzati
+- Suoni globali
+
+---
+
+## Ownership Model
+
+### PlayerController
+- **Owned by:** Client che lo controlla
+- **Authority:** Server
+
+### PlayerState
+- **Owned by:** Stesso owner del controller
+- **Authority:** Server
+- **Visible to:** Tutti (dati pubblici) o solo owner (privati)
+
+### GameManager
+- **Owned by:** Server
+- **Authority:** Server
+- **Visible to:** Tutti
+
+### Territory Actors
+- **Owned by:** Nessuno (world actors)
+- **Authority:** Server
+- **Visible to:** Tutti
+
+---
+
+## Security Measures
+
+### 1. Owner Validation
+Ogni RPC verifica che il chiamante possa agire solo per sé.
+
+```cpp
+if (CallerPlayerState->GameManagerPlayerID != RequestedPlayerID) {
+    // CHEATING - Log e blocca
+    return;
+}
+```
+
+### 2. Server Authority
+Tutte le modifiche di stato avvengono solo sul server.
+
+```cpp
+if (!HasAuthority()) {
+    // Non sei il server - errore
+    return;
+}
+```
+
+### 3. Gameplay Validation
+RPC validation = controlli base (non null, range).
+GameManager validation = logica gameplay (turno, fase, risorse).
+
+Separazione previene exploit ma non disconnette per bug/lag.
+
+### 4. Data Hiding
+COND_OwnerOnly per obiettivi.
+Altre info sensibili mai replicate.
+
+---
+
+## Bandwidth Optimization
+
+### Conditional Replication
+Solo owner riceve obiettivi → -70% traffico obiettivi.
+
+### Delta Compression
+UE replica solo cambiamenti.
+Se `TroopsToPlace` non cambia → 0 byte inviati.
+
+### Relevancy
+Territori lontani possono essere "not relevant" per certi client.
+(Non implementato ancora, ma possibile per mappe enormi).
+
+---
+
+## Testing Strategy
+
+### Standalone
+Un processo, nessuna replicazione.
+Per test logica pura.
+
+### Listen Server
+Server + client nello stesso processo.
+Per test base multiplayer.
+
+### Dedicated Server
+Server separato, N client.
+Per test replicazione reale.
+
+### Simulated Lag
+```
+net PktLag=100
+net PktLoss=5
+```
+Per test robustezza.
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Server-authoritative core
+- COND_OwnerOnly obiettivi
+- RepNotify pattern
+- Server RPC validation
+- Owner checks
+- Multicast eventi globali
+
+🔧 Da fare:
+- Lag compensation
+- Client-side prediction
+- Rollback per discrepanze
+- Metriche network (ping, packet loss)

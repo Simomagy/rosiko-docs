@@ -1,0 +1,119 @@
+---
+title: GameManager
+description: Il cervello del gioco che coordina tutte le fasi della partita
+---
+
+## Ruolo
+Il **GameManager** è il cervello del gioco. Coordina tutte le fasi della partita e fa da ponte tra i giocatori e lo stato di gioco.
+
+---
+
+## Responsabilità Principali
+
+### Gestione Fasi di Gioco
+- **WaitingForPlayers** - Attesa connessione giocatori
+- **ColorSelection** - Selezione colori esercito
+- **InitialDistribution** - Distribuzione territori iniziale
+- **ReinforcementPlacement** - Piazzamento rinforzi
+- **Combat** - Fase combattimento
+- **Fortification** - Spostamento truppe
+- **GameOver** - Fine partita
+
+Ogni fase ha logica specifica e trigger di transizione.
+
+### Assegnazione Obiettivi
+- Filtra obiettivi validi in base a:
+  - Numero giocatori in partita
+  - Colori selezionati
+  - Continenti disponibili sulla mappa
+- Shuffle deterministico con seed fisso
+- Assegnazione dopo selezione colori completata
+- 1 obiettivo principale + N secondari per giocatore
+
+### Validazione Obiettivi
+- Controlla completamento alla fine di ogni turno
+- Valuta ogni condizione (territori, continenti, eliminazioni...)
+- Assegna punti vittoria per secondari completati
+- Dichiara vittoria immediata se principale completato
+
+### Gestione Turni
+- Traccia giocatore corrente
+- Ordine turni basato su ordine selezione colori
+- Skip automatico giocatori eliminati
+- Cambio fase automatico in base ad azioni
+
+---
+
+## Configurazione
+
+**Property Principali:**
+- `ObjectivesConfig` - DataAsset con tutti gli obiettivi
+- `TurnOrder` - Array con ordine dei giocatori
+- `CurrentPlayerTurn` - Index del giocatore corrente
+- `CurrentPhase` - Fase di gioco attuale
+
+---
+
+## Architettura
+
+**Server-Authoritative**
+Tutte le decisioni avvengono sul server. I client inviano richieste tramite RPC.
+
+**Event-Driven**
+Utilizza NetMulticast per notificare eventi a tutti i client:
+- Cambio fase
+- Cambio turno
+- Obiettivo completato
+- Vittoria
+
+---
+
+## Metodi Chiave
+
+```cpp
+// Assegna obiettivi a tutti i giocatori
+AssignObjectivesToAllPlayers()
+
+// Valuta obiettivi di un giocatore
+CheckPlayerObjectives(PlayerState)
+
+// Valuta una singola condizione obiettivo
+EvaluateObjectiveCondition(Condition, PlayerState)
+
+// Cambia fase di gioco
+ChangePhase(NewPhase)
+
+// Passa al prossimo turno
+EndTurn()
+```
+
+---
+
+## Integrazione
+
+**Con PlayerController:**
+Riceve comandi dai client tramite Server RPC validati.
+
+**Con PlayerState:**
+Legge/scrive stato giocatori, assegna obiettivi.
+
+**Con GameState:**
+Aggiorna stato globale visibile a tutti.
+
+**Con Territory Actors:**
+Legge possessi territori per validare obiettivi.
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Sistema fasi completo
+- Assegnazione obiettivi
+- Validazione obiettivi
+- Gestione turni base
+
+🔧 Da fare:
+- Sistema combattimento completo
+- Fortificazione
+- Fine partita con classifica

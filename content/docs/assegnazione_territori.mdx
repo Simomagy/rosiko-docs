@@ -1,0 +1,253 @@
+---
+title: Assegnazione Territori
+description: Sistema di distribuzione automatica dei territori all'inizio della partita
+---
+
+## Panoramica
+Sistema di distribuzione automatica dei territori all'inizio della partita, dopo che tutti i giocatori hanno scelto il colore.
+
+---
+
+## Quando Avviene
+
+### Trigger
+La distribuzione territori avviene **immediatamente dopo** che l'ultimo giocatore ha selezionato il colore.
+
+```
+Ultimo player sceglie colore
+↓
+AssignObjectivesToAllPlayers()  // Prima assegna obiettivi
+↓
+DistributeInitialTerritories()  // Poi distribuisce territori
+↓
+ChangePhase(InitialDistribution)
+```
+
+---
+
+## Algoritmo di Distribuzione
+
+### Step 1: Creazione Lista Territori
+```cpp
+TArray<int32> AvailableTerritoryIDs;
+for (const FTerritoryGameState& Territory : GS->Territories) {
+    AvailableTerritoryIDs.Add(Territory.TerritoryID);
+}
+```
+
+Tutti i territori sulla mappa vengono aggiunti a una lista.
+
+### Step 2: Shuffle Deterministico
+```cpp
+// Shuffle random (deterministico tramite GameRNG)
+int32 LastIndex = AvailableTerritoryIDs.Num() - 1;
+for (int32 i = LastIndex; i > 0; i--) {
+    int32 RandomIndex = GameRNG.RandRange(0, i);
+    AvailableTerritoryIDs.Swap(i, RandomIndex);
+}
+```
+
+**Fisher-Yates Shuffle** con `GameRNG` (FRandomStream deterministico).
+- Stesso seed → stessa sequenza su tutti i client
+- Garantisce distribuzione casuale ma riproducibile
+
+### Step 3: Distribuzione Round-Robin
+```cpp
+int32 TurnIndex = 0;
+for (int32 TerritoryID : AvailableTerritoryIDs) {
+    int32 PlayerID = GS->TurnOrder[TurnIndex];
+    ARosikoPlayerState* PS = GetRosikoPlayerState(PlayerID);
+
+    FTerritoryGameState* Territory = GS->GetTerritory(TerritoryID);
+    Territory->OwnerID = PlayerID;
+    Territory->Troops = 1;  // 1 carro iniziale per "reclamare"
+
+    PS->AddTerritory(TerritoryID);
+    PS->RemoveTroops(1);  // Consuma 1 carro
+
+    BroadcastTerritoryUpdate(TerritoryID);
+
+    TurnIndex = (TurnIndex + 1) % GS->TurnOrder.Num();
+}
+```
+
+**Distribuzione Equa:**
+- Territori assegnati uno alla volta
+- Rotazione ciclica tra giocatori seguendo `TurnOrder`
+- Ogni territorio parte con **1 carro armato**
+- Questo carro viene **sottratto** dal pool iniziale del giocatore
+
+---
+
+## Effetti sulla Partita
+
+### Truppe Residue
+Dopo la distribuzione, ogni giocatore ha truppe residue da piazzare:
+
+```
+Truppe Iniziali (es. 50 per 4 giocatori)
+- Truppe usate per reclamare territori (es. 17 per 17 territori)
+= Truppe rimanenti da piazzare (es. 33)
+```
+
+### Esempio Pratico
+**Partita a 4 giocatori:**
+- Territori totali: 70
+- Carri iniziali per giocatore: 50
+- Territori per giocatore: 70 ÷ 4 = 17-18
+
+**Player 1:**
+- Riceve 17 territori
+- Usa 17 carri per reclamarli (1 per territorio)
+- Rimangono 50 - 17 = **33 carri da piazzare**
+
+**Player 2:**
+- Riceve 18 territori
+- Usa 18 carri per reclamarli
+- Rimangono 50 - 18 = **32 carri da piazzare**
+
+---
+
+## Ordine Distribuzione
+
+### TurnOrder
+L'ordine di distribuzione segue `GS->TurnOrder`, che è stabilito dall'ordine di selezione colori:
+
+```
+Player che sceglie colore per primo → TurnOrder[0]
+Player che sceglie colore per secondo → TurnOrder[1]
+...
+```
+
+**Esempio:**
+1. Player 2 sceglie Rosso → TurnOrder[0] = 2
+2. Player 0 sceglie Blu → TurnOrder[1] = 0
+3. Player 3 sceglie Verde → TurnOrder[2] = 3
+4. Player 1 sceglie Giallo → TurnOrder[3] = 1
+
+Distribuzione territori:
+- Territorio 0 → Player 2
+- Territorio 1 → Player 0
+- Territorio 2 → Player 3
+- Territorio 3 → Player 1
+- Territorio 4 → Player 2
+- ...
+
+---
+
+## Logging
+
+Il sistema logga dettagli utili:
+
+```
+Territories distributed. Players have remaining troops to place.
+  Player 2 (Alice): 17 territories, 33 troops remaining
+  Player 0 (Bob): 18 territories, 32 troops remaining
+  Player 3 (Charlie): 17 territories, 33 troops remaining
+  Player 1 (David): 18 territories, 32 troops remaining
+```
+
+---
+
+## Replicazione
+
+### Server
+- Esegue l'algoritmo di distribuzione
+- Modifica `Territory->OwnerID` e `Territory->Troops`
+- Modifica `PlayerState->OwnedTerritoryIDs` e `TroopsToPlace`
+
+### Broadcast ai Client
+```cpp
+BroadcastTerritoryUpdate(TerritoryID);
+```
+
+Ogni territorio viene notificato ai client tramite RPC multicast.
+I client aggiornano la visualizzazione (colori, armate) automaticamente.
+
+---
+
+## Fase Successiva
+
+Dopo la distribuzione, inizia la **Initial Distribution Phase**:
+
+```cpp
+ChangePhase(EGamePhase::InitialDistribution);
+GS->CurrentPlayerTurn = 0;  // Primo player in TurnOrder
+StartInitialPlacement();
+```
+
+I giocatori piazzano le truppe rimanenti a turno sui propri territori.
+
+---
+
+## Determinismo
+
+### Seed Sincronizzato
+Il `GameRNG` usa un seed fisso (configurabile):
+```cpp
+GameRNG = FRandomStream(GameRulesSeed);
+```
+
+**Cruciale per multiplayer:**
+- Stesso seed su server e client
+- Stessa distribuzione territori per tutti
+- Nessuna discrepanza
+
+### Verifiche
+Se un client rileva una discrepanza (es. territorio assegnato a player diverso), può rilevare problemi di sincronizzazione.
+
+---
+
+## Modalità Future
+
+### Attualmente: RandomTerritories_TurnBasedPlacement
+```cpp
+EInitialDistributionMode::RandomTerritories_TurnBasedPlacement
+```
+
+Territori assegnati random, poi giocatori piazzano carri a turno.
+
+### Modalità Alternative (Future)
+1. **DraftTerritories_TurnBasedPlacement**
+   - Giocatori scelgono territori a turno (draft)
+   - Poi piazzano carri
+
+2. **FullyRandom**
+   - Tutto automatico (AI)
+   - Carri piazzati random
+
+3. **Custom**
+   - Modalità personalizzate
+
+---
+
+## Configurazione
+
+### GameRulesConfig
+La distribuzione usa valori da `UGameRulesConfig`:
+
+```cpp
+UPROPERTY(EditAnywhere)
+EInitialDistributionMode DistributionMode =
+    EInitialDistributionMode::RandomTerritories_TurnBasedPlacement;
+
+UPROPERTY(EditAnywhere)
+int32 TotalTerritories = 70;
+```
+
+---
+
+## Stato Implementazione
+
+✅ Completato:
+- Algoritmo round-robin
+- Shuffle deterministico
+- Replicazione territori
+- Logging dettagliato
+- Sottrazione carri usati
+
+🔧 Future implementazioni:
+- Modalità draft (scelta manuale)
+- Modalità fully random
+- Bilanciamento territoriale avanzato
+- Preview distribuzione
